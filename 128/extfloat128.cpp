@@ -457,7 +457,7 @@ void extfloat128_t::eval_multiply(extfloat128_t& dst, const extfloat128_t& srcA,
 
       uint64_t x0 = x0_l;
       uint64_t x1 = x1_l + x0_h;
-      x2_l  += (x1 < x0_h); // this addition never produces carry, because previos value of x2_l <= 2^64-2
+      x2_l  += (x1 < x0_h); // this addition never produces carry, because previous value of x2_l <= 2^64-2
       uint64_t x2 = x2_l + x1_h;
       uint64_t x3 = x2_h + (x2 < x1_h);
 
@@ -1773,6 +1773,37 @@ extfloat128_t trunc(const extfloat128_t& x)
         ret.m_significand[0] = 0;
       } else {
         ret.m_significand[0] &= uint64_t(-1) << (127 - dExp);
+      }
+    }
+  } else {
+    ret.m_significand[0] = ret.m_significand[1] = 0;
+    ret.m_exponent = extfloat128_t::zero_biased_exponent;
+  }
+  return ret;
+}
+
+
+// round
+// Returns the integral value that is nearest to x, with halfway cases rounded away from zero
+extfloat128_t round(const extfloat128_t& x)
+{
+  extfloat128_t ret = x;
+  uint32_t exp = x.m_exponent;
+  if (exp >= extfloat128_t::exponent_bias - 1) {
+    // abs(x) >= 0.5
+    if (exp < extfloat128_t::exponent_bias + 127) {
+      int32_t dExp = exp - extfloat128_t::exponent_bias;
+      if (dExp >= 0) {
+        ret += extfloat128_t::pow2(-1, x.m_sign);
+        dExp = ret.m_exponent - extfloat128_t::exponent_bias;
+        if (dExp < 64) {
+          ret.m_significand[1] &= uint64_t(-1) << (63 - dExp);
+          ret.m_significand[0] = 0;
+        } else {
+          ret.m_significand[0] &= uint64_t(-1) << (127 - dExp);
+        }
+      } else { // 0.5 <= abs(x) < 1
+        ret = extfloat128_t::one(x.m_sign);
       }
     }
   } else {

@@ -120,6 +120,9 @@ public:
   friend extfloat128_t asinPi(const extfloat128_t& a);                          // asin(a)/pi
   friend extfloat128_t acosPi(const extfloat128_t& a);                          // acos(a)/pi
 
+  friend extfloat128_t sin(const extfloat128_t& a) { return cossin_core(a, 1); }; // sin(a) - not optimized as well as sinPi()
+  friend extfloat128_t cos(const extfloat128_t& a) { return cossin_core(a, 0); }; // cos(a) - not optimized as well as cosPi()
+
   static extfloat128_t construct(uint32_t sign, int32_t exp, uint64_t significand_hi,  uint64_t significand_lo) {
     extfloat128_t ret;
     ret.m_significand[0] = significand_lo;
@@ -131,9 +134,17 @@ public:
   static extfloat128_t pow2(int32_t exp, uint32_t sign = 0) { return construct(sign, exp, uint64_t(1) << 63, 0); }
   static extfloat128_t pi()       { return construct(0,    1, 0xc90fdaa22168c234, 0xc4c6628b80dc1cd1); }
   static extfloat128_t pi_lo()    { return construct(0, -129, 0xa4093822299f31d0, 0x082efa98ec4e6c89); }
+  static extfloat128_t pi_lo2()   { return construct(0, -258, 0x8a5043cc71a026ef, 0x7ca8cd9e69d218da); }
+  static extfloat128_t pi_lo3()   { return construct(0, -387, 0xfd4f5920da0ebc8b, 0x01eca9292ae3dba2); }
   static extfloat128_t invPi()    { return construct(0,   -2, 0xa2f9836e4e441529, 0xfc2757d1f534ddc1); }
   static extfloat128_t invPi_lo() { return construct(1, -132, 0x9275a99b0ef1bef8, 0x06ba71508510ea79); }
+  static extfloat128_t invPi_lo2(){ return construct(1, -262, 0x8db91c5bdb22d1ff,0x9b6d115f62e6de30); }
+  static extfloat128_t invPi_lo3(){ return construct(1, -393, 0xf10a71a76b2c608b,0xbee50568a25dbd8b); }
   friend extfloat128_t mod_pow2(const extfloat128_t& a, int32_t exp); // return sign(a)*mod(abs(a), 2**exp)
+
+  friend extfloat128_t ceil (const extfloat128_t& x); // Rounds x upward, returning the smallest integral value that is not less than x
+  friend extfloat128_t floor(const extfloat128_t& x); // Rounds x downward, returning the largest integral value that is not greater than x
+  friend extfloat128_t round(const extfloat128_t& x); // Returns the integral value that is nearest to x, with halfway cases rounded away from zero
   friend extfloat128_t trunc(const extfloat128_t& x); // Rounds x toward zero, returning the nearest integral value that is not larger in magnitude than x
   static int           compare_ex(const extfloat128_t& x, const extfloat128_t& y);
                                                       // return -1 for unordered, 0 for x == y, 1 for x < y, 2 for x > y
@@ -191,14 +202,19 @@ private:
   static void   eval_sqrt(extfloat128_t& dst, const extfloat128_t& src);
   static void   eval_rsqrt(extfloat128_t& dst, const extfloat128_t& src);
   static void   eval_non_finite(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB, int issub, const uint8_t tab[2][2][3]);
-  static extfloat128_t cossinPi_core(const extfloat128_t& a, int isSin); // isSin ? sin(a*pi) :sin(a*pi)
+  static extfloat128_t cossinPi_core(const extfloat128_t& a, int isSin); // isSin ? sin(a*pi) : cos(a*pi)
+  static extfloat128_t cossin_core  (const extfloat128_t& a, int isSin); // isSin ? sin(a)    : cos(a)
 
+  static extfloat128_t cossinPi_core_body(extfloat128_t& x, int isSin, extfloat128_t*); // isSin ? sin(a*pi) : cos(a*pi)
+
+public:
   uint64_t scale_and_trunc(int e) const // return trunc(abs(*this)*2^e)
   { // don't check for Inf/Nan, on overflow return 0
     uint64_t rshift = int64_t(exponent_bias + 63) - e - m_exponent;
     return rshift < 64 ? m_significand[1] >> rshift : 0;
   }
 
+private:
   extfloat128_t nextinout_core(uint32_t out) const;
   // *this should be non-nan
   // when *this == 0 and out = false return x
@@ -214,6 +230,78 @@ private:
   // otherwise
   // when down = false return next representable value in the direction of +inf
   // when down = true  return next representable value in the direction of -inf
+
+public:
+  // extended accumulator type - mostly for trigs and other special functions
+  // The type intended for intermediate values, mostly accumulators
+  // It has very wide exponent range and 2-3 times wider mantissa (272 to 380 bits) than extfloat128_t
+  // It does not support NaN.
+  // It does not support overflow except for export of extfloat128_t
+  // It does not support signed zeros except for export of extfloat128_t
+  // Overflow on arithmetic operations is mostly not checked
+  struct acc_t {
+    // initialize and import
+    void clear() {
+      m_exponent = 0;
+    }
+    void operator=(const extfloat128_t& a) {
+      m_significand[0] = m_significand[1] = m_significand[2] = 0;
+      m_significand[3] = a.m_significand[0];
+      m_significand[4] = a.m_significand[1];
+      m_significand[5] = 0;
+      m_sign     = a.m_sign;
+      m_exponent = (a.m_exponent == a.zero_biased_exponent) ?
+        0 : (exponent_bias-a.exponent_bias)+a.m_exponent;
+      m_isNormal = true;
+    }
+    void normalize() {
+      if (!m_isNormal)
+        doNormalize();
+    }
+    void from_17bytes_fix(const uint8_t* src);
+
+    // floating point arithmetic
+    void mulx  (const extfloat128_t& a, const extfloat128_t& b);
+    void addsub(const extfloat128_t& a, bool sub);
+    void operator+=(const extfloat128_t& a) {
+      addsub(a, false);
+    }
+    void operator-=(const extfloat128_t& a) {
+      addsub(a, true);
+    }
+    void maddsub(const extfloat128_t& a, const extfloat128_t& b, bool sub);
+    void madd(const extfloat128_t& a, const extfloat128_t& b) {
+      maddsub(a, b, false);
+    }
+    void msub(const extfloat128_t& a, const extfloat128_t& b) {
+      maddsub(a, b, true);
+    }
+    void negate() {
+      m_sign ^= 1;
+    }
+    // fix-point arithmetic
+    void fix_mulx5(const extfloat128_t& a, const uint32_t b[7*2], int b_exponent);
+    void fix_mulx3(const extfloat128_t& a, const uint32_t b[5*2], int b_exponent);
+
+    // export
+    extfloat128_t to_extfloat128_t(bool bRound) ; // if (bRound) round to nearest otherwise truncate
+    extfloat128_t round() { return to_extfloat128_t(true);  }
+    extfloat128_t trunc() { return to_extfloat128_t(false); }
+
+    // representation
+    static const uint64_t exponent_bias = (uint64_t(1)<<63)-1;
+    static const int NBITS_MIN = 256 + 24;
+    static const int NBITS_MAX = 320 + 60;
+    uint64_t m_significand[6]; // LS word first. In normal form m_significand[5]==0, bit 63 of m_significand[4]==1
+                               // m_significand[5] holds signed (int64_t) value
+    uint64_t m_exponent;
+    uint8_t  m_sign;
+    bool     m_isNormal; // for zero this member undefined
+
+    private:
+    void doNormalize();
+    void PartialNormalize();
+  };
 };
 
 inline bool operator==(const extfloat128_t& l, const extfloat128_t& r) {

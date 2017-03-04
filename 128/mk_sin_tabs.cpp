@@ -96,16 +96,41 @@ int main()
       // << "\n";
   // }
 
+  #if 0
+
   const int SIN_TAB_SZ = 32;
-  boost_decafloat_t sin_tab[SIN_TAB_SZ-1];
-  for (int i = 1; i < SIN_TAB_SZ; ++i) {
-    double x = 0.5*i/SIN_TAB_SZ;
-    sin_tab[i-1] = sin(boost::math::constants::pi<boost_decafloat_t>()*x);
-  }
+  double x_tab[SIN_TAB_SZ];
+  for (int i = 0; i < 2; ++i)
+    x_tab[i] = (1.25+0.5*i)*0.5/SIN_TAB_SZ;
+  for (int i = 2; i < SIN_TAB_SZ-2; ++i)
+    x_tab[i] = (i+0.5)*0.5/SIN_TAB_SZ;
+  for (int i = SIN_TAB_SZ-2; i < SIN_TAB_SZ; ++i)
+    x_tab[i] = 0.5 - x_tab[SIN_TAB_SZ-1-i];
+
+  boost_decafloat_t sin_tab[SIN_TAB_SZ];
+  for (int i = 0; i < SIN_TAB_SZ; ++i)
+    sin_tab[i] = sin(boost::math::constants::pi<boost_decafloat_t>()*x_tab[i]);
 
   printf("// sin table\n");
-  print_tab_fx(sin_tab, SIN_TAB_SZ-1);
+  print_tab_fx(sin_tab, SIN_TAB_SZ);
   printf("// end of sin table\n");
+
+  #else
+
+  const int SIN_TAB_SZ = 32;
+  double x_tab[SIN_TAB_SZ];
+  for (int i = 0; i < SIN_TAB_SZ; ++i)
+    x_tab[i] = (i+0.5)*0.5/SIN_TAB_SZ;
+
+  boost_decafloat_t sin_tab[SIN_TAB_SZ];
+  for (int i = 0; i < SIN_TAB_SZ; ++i)
+    sin_tab[i] = sin(boost::math::constants::pi<boost_decafloat_t>()*x_tab[i]);
+
+  printf("// sin table\n");
+  print_tab_fx(sin_tab, SIN_TAB_SZ);
+  printf("// end of sin table\n");
+
+  #endif
 
   return 0;
 }

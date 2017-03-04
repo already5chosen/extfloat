@@ -13,12 +13,16 @@
 
 typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<128, boost::multiprecision::backends::digit_base_2, void, boost::int64_t, INT_MIN, INT_MAX> > boost_quadfloat_t;
 typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<256, boost::multiprecision::backends::digit_base_2, void, boost::int64_t, INT_MIN, INT_MAX> > boost_octafloat_t;
+typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<320, boost::multiprecision::backends::digit_base_2, void, boost::int64_t, INT_MIN, INT_MAX> > boost_decafloat_t;
+typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<2048, boost::multiprecision::backends::digit_base_2, void, boost::int64_t, INT_MIN, INT_MAX> > boost_float2048b_t;
 
 static const double MIN_N_ITER  = 1;
 static const double MAX_N_ITER  = 1e10;
 
-static void make_random_quadfloat(extfloat128_t* dst, std::mt19937_64& rndGen, std::uniform_int_distribution<uint64_t>& rndDistr, bool saneExponent = false, bool uniformal = false);
-static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<uint64_t>& rndDistr);
+static void make_random_quadfloat(extfloat128_t* dst, std::mt19937_64& rndGen, std::uniform_int_distribution<uint64_t>& rndDistr, int maxExp, bool uniformal = false);
+static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<uint64_t>& rndDistr, int maxExp);
+static boost_float2048b_t find_nearest_above_NxPi(int exp, double nPlus);
+static boost_float2048b_t find_nearest_below_NxPi(int exp, double nPlus);
 
 static void make_quadfloat(extfloat128_t* dst, int sign, unsigned exp, uint64_t msw, uint64_t lsw) {
   dst->m_sign           = sign;
@@ -56,17 +60,46 @@ static void print(const extfloat128_t& a) {
   printf("%d %11u %016I64x:%016I64x {%d}\n", a.m_sign, a.m_exponent, a.m_significand[1], a.m_significand[0], a._get_exponent());
 }
 
-static bool report_mismatch(extfloat128_t a, int64_t n);
+static boost_octafloat_t to_octafloat(const extfloat128_t& x) {
+  boost_octafloat_t b;
+  convert_to_boost_bin_float(&b, x);
+  return b;
+}
+
+static boost_octafloat_t ref_cos(extfloat128_t x) {
+  static const boost_float2048b_t Pi    = boost::math::constants::pi<boost_float2048b_t>();
+  static const boost_float2048b_t TwoPi = boost::math::constants::pi<boost_float2048b_t>()*2;
+  int sign = 0;
+  x.m_sign = 0;
+  boost_float2048b_t xx;
+  convert_to_boost_bin_float(&xx, x);
+  xx = fmod(xx, TwoPi);
+  if (xx >= Pi) {
+    xx -= Pi;
+    sign = !sign;
+  }
+  boost_decafloat_t xo(xx);
+  xo = cos(xo);
+  if (sign)
+    xo = -xo;
+  return static_cast<boost_octafloat_t>(xo);
+}
+
+static bool report_mismatch(extfloat128_t a, int64_t n, bool testBoost);
+static double NormalizeDiff(const extfloat128_t& ref, const extfloat128_t& res, const boost_octafloat_t& oRef);
+
 int main(int argz, char** argv)
 {
   if (argz < 2)
   {
     fprintf(stderr,
-      "cos_test - validate implementation of cosPi().\n"
+      "tst_cos - validate implementation of cos().\n"
       "Usage:\n"
-      "cos_test nIter [u]\n"
+      "tst_cos nIter [u | b]  [number]\n"
       "where\n"
-      " u - test with arguments uniformalyy distributed in range (-0.5..0.5)\n"
+      " number - test arguments in range (-2.0**number..2.0**number). Default number = 1\n"
+      " u - test with arguments uniformly distributed in range (-2.0**number..2.0**number)\n"
+      " b - test boost implementation with arguments uniformly distributed in range (-2.0**number..2.0**number)\n"
       );
     return 1;
   }
@@ -81,25 +114,71 @@ int main(int argz, char** argv)
   }
   int64_t nIter = int64_t(dnIter);
   bool uniformal = false;
-  if (argz > 2 && argv[2][0] == 'u')
-    uniformal = true;
+  bool testBoost = false;
+  int  maxExp = 1;
+  for (int arg_i = 2; arg_i < argz; ++arg_i) {
+    char* arg =argv[arg_i];
+    switch (arg[0]) {
+      case 'u':
+      case 'U':
+        uniformal = true;
+        break;
+      case 'b':
+      case 'B':
+        uniformal = true;
+        testBoost = true;
+        break;
+      default:
+      {
+        char* endp;
+        int val = strtol(arg, &endp, 0);
+        if (endp != arg && val <= 1024)
+          maxExp = val;
+      }
+        break;
+    }
+  }
+  printf("maxExp = %d.%s\n", maxExp, uniformal ? " Uniformal distribution." : "");
+
+  std::vector<extfloat128_t> specialPoints;
+  if (!uniformal) {
+    for (int exp = 2; exp < maxExp; ++exp) {
+      extfloat128_t x;
+      convert_from_boost_bin_float(&x, find_nearest_above_NxPi(exp, 0.5));
+      specialPoints.push_back(x);
+      convert_from_boost_bin_float(&x, find_nearest_below_NxPi(exp, 0.5));
+      specialPoints.push_back(x);
+    }
+  }
 
   std::mt19937_64 rndGen;
   std::uniform_int_distribution<uint64_t> rndDistr(0, uint64_t(-1));
 
-  boost_octafloat_t x_o, yRef_o, yRes_o, yDiff_o, yUlp_o;
+  const double errThr = testBoost ? 64: 2;
+  boost_octafloat_t yRef_o, yRes_o, yDiff_o, yUlp_o;
   extfloat128_t     x;
-  int64_t n = 1;
-  uint64_t mCnt[4] = {0};
-  static const boost_octafloat_t oPi = boost::math::constants::pi<boost_octafloat_t>();
+  int64_t n = 0;
+  uint64_t mCnt[5] = {0};
   double maxErr_v = 0;
   extfloat128_t maxErr_x = 0;
+  int64_t nSpecialPoints = specialPoints.size();
+  nIter += nSpecialPoints;
   while (nIter > 0) {
-    make_random_quadfloat(&x, rndGen, rndDistr, false, uniformal);
-    convert_to_boost_bin_float(&x_o, x);
-    yRef_o = cos(x_o*oPi);
+    if (n < nSpecialPoints)
+      x = specialPoints[n];
+    else
+      make_random_quadfloat(&x, rndGen, rndDistr, maxExp, uniformal);
+    yRef_o = ref_cos(x);
     extfloat128_t yRef; convert_from_boost_bin_float(&yRef, yRef_o);
-    extfloat128_t yRes = cosPi(x);
+    extfloat128_t yRes;
+    if (!testBoost) {
+      yRes = cos(x);
+    } else {
+      boost_quadfloat_t x_q;
+      convert_to_boost_bin_float(&x_q, x);
+      boost_quadfloat_t yRes_q = cos(x_q);
+      convert_from_boost_bin_float(&yRes, yRes_q);
+    }
     if (yRef != yRes) {
       if (!isnan(yRes) || !isnan(yRef)) {
         ++mCnt[0];
@@ -107,20 +186,20 @@ int main(int argz, char** argv)
           // report_mismatch(x, n);
           // return 1;
         // }
-        extfloat128_t yUlp = yRef.ulp();
-        convert_to_boost_bin_float(&yUlp_o, yUlp);
-        convert_to_boost_bin_float(&yRes_o, yRes);
-        yDiff_o = fabs(yRes_o - yRef_o);
-        if (yDiff_o >= yUlp_o)
-          if (report_mismatch(x, n))
-            return 1;
-        double err = (yDiff_o / yUlp_o).convert_to<double>();
+        double err = NormalizeDiff(yRef, yRes, yRef_o);
+        if (err > errThr) {
+          report_mismatch(x, n, testBoost);
+          return 1;
+        }
         if (err >= 9./16) {
           ++mCnt[1];
           if (err >= 5./8) {
             ++mCnt[2];
             if (err >= 3./4) {
               ++mCnt[3];
+              if (err >= 1.) {
+                ++mCnt[4];
+              }
             }
           }
         }
@@ -134,57 +213,89 @@ int main(int argz, char** argv)
     nIter -= 1;
   }
 
-  printf("o.k. %I64u/%I64u/%I64u/%I64u mismatches. Max mismatch = %.6f ULP at x = %.17e\n",
+  printf("o.k. %I64u/%I64u/%I64u/%I64u/%I64u mismatches. Max mismatch = %.6f ULP at x = ",
     mCnt[0],
     mCnt[1],
     mCnt[2],
     mCnt[3],
-    maxErr_v, maxErr_x.convert_to_double());
-  report_mismatch(maxErr_x, -1);
-  speed_test(rndGen, rndDistr);
+    mCnt[4],
+    maxErr_v);
+  boost_quadfloat_t b;
+  convert_to_boost_bin_float(&b, maxErr_x);
+  std::cout << b << "\n";
+  report_mismatch(maxErr_x, -1, testBoost);
+  speed_test(rndGen, rndDistr, maxExp);
 
   return 0;
 }
 
-static bool report_mismatch(extfloat128_t a, int64_t n)
+static double NormalizeDiff(const extfloat128_t& ref, const extfloat128_t& res, const boost_octafloat_t& oRef)
+{
+  return ((to_octafloat(res)-oRef)/to_octafloat(nextafter(ref, res) - ref)).convert_to<double>();
+}
+
+static bool report_mismatch(extfloat128_t a, int64_t n, bool testBoost)
 {
   boost_quadfloat_t b;
   convert_to_boost_bin_float(&b, a);
-  extfloat128_t     ra = cosPi(a);
-  boost_quadfloat_t rb = cos(b*boost::math::constants::pi<boost_quadfloat_t>());
+  extfloat128_t     ra = cos(a);
   boost_octafloat_t o(b);
-  boost_octafloat_t ro = cos(o*boost::math::constants::pi<boost_octafloat_t>());
+  boost_quadfloat_t rb = testBoost ? cos(boost_quadfloat_t(o)) : 0;
+  boost_octafloat_t ro = ref_cos(a);
 
   if (n >= 0) printf("fail at iteration %I64d.\n", n);
-  print(b);
   print(a);
+  print(b);
+  if (testBoost)
+    print(rb);
+  else
+    print(ra);
+  convert_to_boost_bin_float(&rb, ra);
   print(rb);
-  print(ra);
   print(ro);
+
+  // boost_float2048b_t xx = abs(b);
+  // xx = fmod(xx, boost::math::constants::pi<boost_float2048b_t>()*2);
+  // xx /= boost::math::constants::pi<boost_float2048b_t>();
+  // boost_octafloat_t xo(xx-1);
+  // print(xo);
+
+  // boost_float2048b_t xx = b;
+  // xx = fmod(xx, boost::math::constants::pi<boost_float2048b_t>()*2);
+  // boost_octafloat_t xo(xx);
+  // print(xo);
+  // xo -= boost::math::constants::pi<boost_octafloat_t>();
+  // print(xo);
+  // xx -= boost::math::constants::pi<boost_float2048b_t>();
+  // xo = static_cast<boost_octafloat_t>(xx);
+  // print(xo);
+
+  // printf("---\n");
+  // print(o/boost::math::constants::pi<boost_octafloat_t>());
+  // extfloat128_t aa = fma(a, extfloat128_t::invPi(), a*extfloat128_t::invPi_lo());
+  // print(aa);
+  // boost_octafloat_t aa_o;
+  // convert_to_boost_bin_float(&aa_o, aa);
+  // print(cos(aa_o*boost::math::constants::pi<boost_octafloat_t>()));
   return true;
 }
 
 static void make_random_quadfloat(
-  extfloat128_t* dst,
-  std::mt19937_64& rndGen,
+  extfloat128_t*                           dst,
+  std::mt19937_64&                         rndGen,
   std::uniform_int_distribution<uint64_t>& rndDistr,
-  bool saneExponent,
-  bool uniformal)
+  int                                      maxExp,
+  bool                                     uniformal)
 {
   auto rndFunc = std::bind ( rndDistr, std::ref(rndGen) );
   uint64_t msw = rndFunc();
   uint64_t lsw = rndFunc();
   uint64_t exw = rndFunc();
   if (uniformal) {
-    *dst  = extfloat128_t::ldexp(extfloat128_t(msw), -(64*1+1));
-    *dst += extfloat128_t::ldexp(extfloat128_t(lsw), -(64*2+1));
-    *dst += extfloat128_t::ldexp(extfloat128_t(exw & uint64_t(-2)), -(64*3+1));
+    *dst  = extfloat128_t::ldexp(extfloat128_t(msw),                maxExp-64*1);
+    *dst += extfloat128_t::ldexp(extfloat128_t(lsw),                maxExp-64*2);
+    *dst += extfloat128_t::ldexp(extfloat128_t(exw & uint64_t(-2)), maxExp-64*3);
     dst->m_sign = exw & 1;
-    // printf("%016I64x:%016I64x:%016I64x\n", msw, lsw, exw);
-    // print(*dst);
-    // boost_quadfloat_t b;
-    // convert_to_boost_bin_float(&b, *dst);
-    // print(b);
     return;
   }
 
@@ -192,47 +303,47 @@ static void make_random_quadfloat(
   uint32_t expLsw = uint32_t(exw);
   uint32_t expMsw = uint32_t(exw >> 32);
   int sign = expMsw & 1;
-  uint32_t biased_exp = std::min(std::max(expLsw, extfloat128_t::min_biased_exponent), extfloat128_t::max_biased_exponent);
-  if (saneExponent) {
+  uint32_t biased_exp = 0;
+  unsigned expSel = (expMsw >> 1) & 63;
+  if (expSel != 0) {
+    int32_t minExp = ((expSel & 1) != 0) ?
+      -4 :                   // range [-4..maxExp)
+      dst->min_exponent_val; // range [min_exponent_val..maxExp)
+    biased_exp = extfloat128_t::exponent_bias + (((int64_t(maxExp)-minExp)*expLsw) >> 32) + minExp;
+    biased_exp = std::min(std::max(biased_exp, extfloat128_t::min_biased_exponent), extfloat128_t::max_biased_exponent);
     msw |= (uint64_t(1) << 63);
-    make_quadfloat(dst, sign, extfloat128_t::exponent_bias, msw, lsw);
-    *dst *= double(int(expLsw>>1)) * (1.0/(1<<(31-3)));
   } else {
-    unsigned expSel = (expMsw >> 1) & 63;
-    if (expSel != 0) {
-      if ((expSel & 1) != 0) {
-        biased_exp = extfloat128_t::exponent_bias + 5 - (expLsw % 16);
-      } else {
-        // full negative range
-        if (biased_exp > extfloat128_t::exponent_bias + 5)
-          biased_exp -= extfloat128_t::exponent_bias;
-      }
-      msw |= (uint64_t(1) << 63);
-    } else {
-      // generate special value of exponent
-      msw = lsw = 0;
-      switch (expLsw % 3) {
-        case 0:
-          biased_exp = dst->zero_biased_exponent; // zero
-          break;
-        case 1:
-          biased_exp = dst->inf_nan_biased_exponent; // inf
-          break;
-        default:
-          biased_exp = dst->inf_nan_biased_exponent; // NaN
-          msw  = dst->qnan_bit;
-          sign = 0;
-          break;
-      }
+    // generate special value of exponent
+    msw = lsw = 0;
+    switch (expLsw % 3) {
+      case 0:
+        biased_exp = dst->zero_biased_exponent;    // zero
+        break;
+      case 1:
+        biased_exp = dst->inf_nan_biased_exponent; // inf
+        break;
+      default:
+        biased_exp = dst->inf_nan_biased_exponent; // NaN
+        msw  = dst->qnan_bit;
+        sign = 0;
+        break;
     }
-    make_quadfloat(dst, sign, biased_exp, msw, lsw);
+  }
+  make_quadfloat(dst, sign, biased_exp, msw, lsw);
+  if ((expSel & 3)==1 && biased_exp > dst->exponent_bias + 1) {
+    // generate number in close proximity of N*pi/2
+    *dst *= (dst->invPi()*2.0);
+    static const boost_decafloat_t halfPi = boost::math::constants::pi<boost_decafloat_t>() * 0.5;
+    boost_decafloat_t b;
+    convert_to_boost_bin_float(&b, round(*dst));
+    convert_from_boost_bin_float(dst, b*halfPi);
   }
 }
 
-static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<uint64_t>& rndDistr)
+static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<uint64_t>& rndDistr, int maxExp)
 {
-  const int VECLEN = 111;
-  const int NITER  = 777;
+  const int VECLEN = 1111;
+  const int NITER  = 77;
   extfloat128_t      inpvec_a[VECLEN];
   boost_quadfloat_t  inpvec_b[VECLEN];
   extfloat128_t      outvec_a[VECLEN];
@@ -240,14 +351,13 @@ static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<ui
   uint64_t dummy[3] = {0};
   uint64_t dt_a[NITER];
   uint64_t dt_b[NITER];
-  static const boost_quadfloat_t bqfPi = boost::math::constants::pi<boost_quadfloat_t>();
   for (int it = 0; it < NITER; ++it) {
     for (int i = 0; i < VECLEN; ++i)
-      make_random_quadfloat(&inpvec_a[i], std::ref(rndGen), rndDistr, true);
+      make_random_quadfloat(&inpvec_a[i], std::ref(rndGen), rndDistr, maxExp, true);
 
     uint64_t t0 = __rdtsc();
     for (int i = 0; i < VECLEN; ++i)
-      outvec_a[i] = cosPi(inpvec_a[i]);
+      outvec_a[i] = cos(inpvec_a[i]);
     uint64_t t1 = __rdtsc();
     dt_a[it] = t1 - t0;
     for (int i = 0; i < VECLEN; ++i) {
@@ -258,12 +368,11 @@ static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<ui
 
     for (int i = 0; i < VECLEN; ++i) {
       convert_to_boost_bin_float(&inpvec_b[i], inpvec_a[i]);
-      inpvec_b[i] *= bqfPi;
     }
 
     t0 = __rdtsc();
     for (int i = 0; i < VECLEN; ++i)
-      outvec_b[i] = cos(inpvec_b[i]);
+      outvec_b[i] = inpvec_b[i].backend().exponent() < 128 ? cos(inpvec_b[i]) : 0;
     t1 = __rdtsc();
     dt_b[it] = t1 - t0;
     for (int i = 0; i < VECLEN; ++i) {
@@ -276,5 +385,97 @@ static void speed_test(std::mt19937_64& rndGen, std::uniform_int_distribution<ui
   std::nth_element(&dt_b[0], &dt_b[NITER/2], &dt_b[NITER]);
   printf("my %I64u. boost %I64u\n", dt_a[NITER/2]/VECLEN, dt_b[NITER/2]/VECLEN);
 
-  printf("%I64u %I64u %I64u\n", dummy[0], dummy[1], dummy[2]);
+  printf("%I64x %I64x %I64x\n", dummy[0], dummy[1], dummy[2]);
+}
+
+static const boost_float2048b_t Pi = boost::math::constants::pi<boost_float2048b_t>();
+static boost_float2048b_t rem_ulp(const boost_float2048b_t& x, int exp)
+{
+  return x - ldexp(trunc(ldexp(x, 127-exp)), exp-127);
+}
+
+static boost_float2048b_t find_nearest_above_NxPi(int exp, double nPlus)
+{
+  boost_float2048b_t ulp = ldexp(boost_float2048b_t(1), exp-127);
+  boost_float2048b_t n0  = ceil(ldexp(boost_float2048b_t(1), exp) / Pi - nPlus);
+  boost_float2048b_t n2  = ceil(ldexp(boost_float2048b_t(2), exp) / Pi - nPlus);
+  boost_float2048b_t n   = n0;
+  boost_float2048b_t overI  = 1;
+  boost_float2048b_t underI = 1;
+  for (;;) {
+    boost_float2048b_t dx = rem_ulp((n+nPlus)*Pi, exp);
+    boost_float2048b_t underV;
+    bool done = false;
+    do {
+      underV = ulp - rem_ulp(underI*Pi, exp);
+      if (underV < dx)
+        break;
+      // update overI and underI
+      boost_float2048b_t overV  = rem_ulp(overI*Pi, exp);
+      if (underV < overV) {
+        overI += underI*trunc(overV/underV);
+        overV  = rem_ulp(overI*Pi, exp);
+      }
+      // here underV > overV
+      boost_float2048b_t m = trunc(std::min(underV, underV-dx+overV)/overV);
+      underI += overI*m;
+      done = (n+underI >= n2);
+    } while (!done);
+
+    if (!done) {
+      // (underV < dx)
+      boost_float2048b_t dn = trunc(dx/underV)*underI;
+      if (n+dn >= n2) {
+        dn = trunc((n2-1-n)/underI)*underI;
+        done = true;
+      }
+      n += dn;
+    }
+    if (done)
+      break;
+  }
+  return (n+nPlus)*Pi;
+}
+
+static boost_float2048b_t find_nearest_below_NxPi(int exp, double nPlus)
+{
+  boost_float2048b_t ulp = ldexp(boost_float2048b_t(1), exp-127);
+  boost_float2048b_t n0  = ceil(ldexp(boost_float2048b_t(1), exp) / Pi - nPlus);
+  boost_float2048b_t n2  = ceil(ldexp(boost_float2048b_t(2), exp) / Pi - nPlus);
+  boost_float2048b_t n   = n0;
+  boost_float2048b_t overI  = 1;
+  boost_float2048b_t underI = 1;
+  for (;;) {
+    boost_float2048b_t dx = ulp - rem_ulp((n+nPlus)*Pi, exp);
+    boost_float2048b_t overV;
+    bool done = false;
+    do {
+      overV = rem_ulp(overI*Pi, exp);
+      if (overV < dx)
+        break;
+      // update overI and underI
+      boost_float2048b_t underV = ulp - rem_ulp(underI*Pi, exp);
+      if (overV < underV) {
+        underI += overI*trunc(underV/overV);
+        underV  = ulp - rem_ulp(underI*Pi, exp);
+      }
+      // here overV > underV
+      boost_float2048b_t m = trunc(std::min(overV, overV-dx+underV)/underV);
+      overI += underI*m;
+      done = (n+overI >= n2);
+    } while (!done);
+
+    if (!done) {
+      // (underV < dx)
+      boost_float2048b_t dn = trunc(dx/overV)*overI;
+      if (n+dn >= n2) {
+        dn = trunc((n2-1-n)/overI)*overI;
+        done = true;
+      }
+      n += dn;
+    }
+    if (done)
+      break;
+  }
+  return (n+nPlus)*Pi;
 }
