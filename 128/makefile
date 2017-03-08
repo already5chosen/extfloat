@@ -39,6 +39,7 @@ ALL_EXE += mk_sin_tabs.exe
 ALL_EXE += tst_cmp.exe
 ALL_EXE += tst_accadd.exe
 ALL_EXE += tst_accmadd.exe
+ALL_EXE += tst_ostream.exe
 all: ${ALL_EXE}
 
 OBJLIST :=
@@ -46,6 +47,7 @@ OBJLIST += extfloat128.o
 OBJLIST += extfloat128_acc.o
 OBJLIST += extfloat128_sincos.o
 OBJLIST += extfloat128_atan.o
+OBJLIST += extfloat128_ostream.o
 OBJLIST += tst_div.o
 OBJLIST += tst_mul.o
 OBJLIST += tst_add.o
@@ -69,6 +71,7 @@ OBJLIST += mk_sin_tabs.o
 OBJLIST += tst_cmp.o
 OBJLIST += tst_accadd.o
 OBJLIST += tst_accmadd.o
+OBJLIST += tst_ostream.o
 
 -include $(OBJLIST:.o=.d)
 
@@ -139,6 +142,9 @@ tst_accadd.exe : tst_accadd.o extfloat128.o extfloat128_acc.o
 	${CP} $+ -o$@
 
 tst_accmadd.exe : tst_accmadd.o extfloat128.o extfloat128_acc.o
+	${CP} $+ -o$@
+
+tst_ostream.exe : tst_ostream.o extfloat128.o extfloat128_acc.o extfloat128_ostream.o
 	${CP} $+ -o$@
 
 clean:

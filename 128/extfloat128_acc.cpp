@@ -15,23 +15,28 @@
 // Overflow on arithmetic operations is mostly not checked
 
 // extfloat128_t::acc_t initialization
+void extfloat128_t::acc_t::doNormalizeSign()
+{
+  const uint64_t BIT_63 = uint64_t(1)<<63;
+  uint64_t y5 = m_significand[5];
+  if (y5 & BIT_63) {
+    // significand is negative - negate
+    int i;
+    for (i = 0; m_significand[i] == 0; ++i) ;
+    m_significand[i] = 0-m_significand[i];
+    ++i;
+    for (; i < 6; ++i)
+      m_significand[i] = ~m_significand[i];
+    m_sign ^= 1;
+  }
+}
 void extfloat128_t::acc_t::doNormalize()
 {
   m_isNormal = true;
   if (m_exponent != 0) {
+    doNormalizeSign();
     const uint64_t BIT_63 = uint64_t(1)<<63;
     uint64_t y5 = m_significand[5];
-    if (y5 & BIT_63) {
-      // significand is negative - negate
-      int i;
-      for (i = 0; m_significand[i] == 0; ++i) ;
-      m_significand[i] = 0-m_significand[i];
-      ++i;
-      for (; i < 6; ++i)
-        m_significand[i] = ~m_significand[i];
-      m_sign ^= 1;
-    }
-    y5 = m_significand[5];
     if (y5 != 0) {
       // shift to the right
       uint64_t y4 = m_significand[4];
@@ -502,6 +507,48 @@ void extfloat128_t::acc_t::maddsub(const extfloat128_t& a, const extfloat128_t& 
       }
       // print(*this, "b ");
       PartialNormalize();
+    }
+  }
+}
+
+void extfloat128_t::acc_t::round_to_nearest_tie_to_even()
+{
+  uint64_t e = m_exponent;
+  if (e < exponent_bias+319) {
+    if (e > exponent_bias-(NBITS_MAX-320)) {
+      if (!m_isNormal)
+        doNormalizeSign();
+      unsigned oneBitPos = exponent_bias + 319 - e;
+      uint64_t g = m_significand[oneBitPos/64] & (uint64_t(1) << (oneBitPos%64)); // in order to break tie toward even
+      unsigned halfBitPos    = oneBitPos - 1;
+      unsigned halfWordPos   = halfBitPos / 64;
+      unsigned halfInWordPos = halfBitPos % 64;
+      for (unsigned i = 0; i < halfWordPos; ++i) {
+        g |= m_significand[i];
+        m_significand[i] = 0;
+      }
+      uint64_t hw = m_significand[halfWordPos];
+      uint64_t hg = (hw << (63-halfInWordPos)) | (g != 0);
+      hw &= (uint64_t(-2) << halfInWordPos);
+      m_significand[halfWordPos] = hw;
+      if (hg > (uint64_t(1) << 63)) {
+        // add 1
+        uint64_t inc = (uint64_t(1) << (oneBitPos%64));
+        unsigned i = oneBitPos/64;
+        m_significand[i] += inc;
+        // propagate carry
+        while (m_significand[i]==0) {
+          ++i;
+          m_significand[i] += 1;
+        }
+        m_isNormal = false;
+        if (i == 5)
+          doNormalize();
+      } else if ((m_significand[5] | m_significand[4])==0) {
+        clear();
+      }
+    } else {
+      clear();
     }
   }
 }

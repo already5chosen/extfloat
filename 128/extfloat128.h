@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <limits.h>
 #include <string.h>
+#ifdef USE_EXTFLOAT128_T_OSTREAM
+#include <ostream>
+#endif
 
 class extfloat128_t {
 public:
@@ -19,6 +22,10 @@ public:
   extfloat128_t (int64_t a) {
     from_int64(this, a);
   }
+
+  #ifdef USE_EXTFLOAT128_T_OSTREAM
+  friend std::ostream& operator<<(std::ostream& os, const extfloat128_t& x);
+  #endif
 
   //extfloat128_t operator=(double a);
   //extfloat128_t operator=(int a);
@@ -47,6 +54,7 @@ public:
 
   double convert_to_double() const;
   float  convert_to_float() const;
+  int64_t convert_to_int64() const;
   extfloat128_t sqrt() const {
     extfloat128_t res;
     eval_sqrt(res, *this);
@@ -279,6 +287,7 @@ public:
     void negate() {
       m_sign ^= 1;
     }
+    void round_to_nearest_tie_to_even();
     // fix-point arithmetic
     void fix_mulx5(const extfloat128_t& a, const uint32_t b[7*2], int b_exponent);
     void fix_mulx3(const extfloat128_t& a, const uint32_t b[5*2], int b_exponent);
@@ -299,6 +308,7 @@ public:
     bool     m_isNormal; // for zero this member undefined
 
     private:
+    void doNormalizeSign();
     void doNormalize();
     void PartialNormalize();
   };
