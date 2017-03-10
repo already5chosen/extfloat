@@ -158,6 +158,7 @@ int main(int argz, char** argv)
   return 0;
 }
 
+extern int dbg;
 static bool report_mismatch(extfloat128_t a, int64_t n, int prec)
 {
   boost_float128_t b;
@@ -173,29 +174,31 @@ static bool report_mismatch(extfloat128_t a, int64_t n, int prec)
   res << a;
   ref << b;
 
-  std::cout << "prec " << prec << "\n";
-  print(b);
-  std::cout << "res " << res.str() << "\n";
-  std::cout << "ref " << ref.str() << "\n";
   boost_float512_t x = b;
-  boost_float512_t xa(res.str());
   boost_float512_t xb(ref.str());
+  boost_float512_t xa = -1;
+  try {
+    xa = boost_float512_t(res.str());
+    if (res.str().size()==ref.str().size()) {
+      if (abs(x-xa) < abs(x-xb)) {
+        return false; // mine is better
+      }
 
-  if (res.str().size()==ref.str().size()) {
-    if (abs(x-xa) < abs(x-xb)) {
-      return false; // mine is better
+      extfloat128_t ax;
+      convert_from_boost_bin_float(&ax, xa);
+      if (ax == a) {
+      #if 1
+        int eff_prec = std::min(64, prec);
+        if (abs(x-xa) < abs(x)*pow(10,-eff_prec)*0.7)
+          return false; // mine is good enough
+      #endif
+      }
     }
-
-    extfloat128_t ax;
-    convert_from_boost_bin_float(&ax, xa);
-    if (ax == a) {
-    #if 1
-      int eff_prec = std::min(64, prec);
-      if (abs(x-xa) < abs(x)*pow(10,-eff_prec)*0.7)
-        return false; // mine is good enough
-    #endif
-    }
-  }
+  } catch (...) {}
+  dbg = 1;
+  res.str("");
+  res << a;
+  dbg = 0;
 
   if (n >= 0) printf("fail at iteration %I64d.\n", n);
   std::cout << "prec " << prec << "\n";

@@ -76,6 +76,7 @@ public:
   static bool eval_uo      (const extfloat128_t& srcA, const extfloat128_t& srcB);
   static void eval_addsub  (extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB, int issub);
   static void eval_multiply(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB);
+  static void eval_multiply_rtz(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB); // round toward zero
   static void eval_divide  (extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB);
   static void eval_add     (extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB);
   static void eval_subtract(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB);
@@ -287,7 +288,7 @@ public:
     void negate() {
       m_sign ^= 1;
     }
-    void round_to_nearest_tie_to_even();
+    int round_to_nearest_tie_to_even(); // return -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
     // fix-point arithmetic
     void fix_mulx5(const extfloat128_t& a, const uint32_t b[7*2], int b_exponent);
     void fix_mulx3(const extfloat128_t& a, const uint32_t b[5*2], int b_exponent);

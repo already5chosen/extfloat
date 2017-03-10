@@ -507,6 +507,69 @@ void extfloat128_t::eval_multiply(extfloat128_t& dst, const extfloat128_t& srcA,
   }
 }
 
+void extfloat128_t::eval_multiply_rtz(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB)
+{
+  uint32_t expA = srcA.m_exponent;
+  uint32_t expB = srcB.m_exponent;
+  if (expA != inf_nan_biased_exponent && expB != inf_nan_biased_exponent) {
+    if (expA != zero_biased_exponent && expB != zero_biased_exponent) {
+      // both numbers are normal
+      int64_t expR = static_cast<int64_t>(expA) + expB + 1 - exponent_bias;
+
+      const uint64_t BIT_63      = uint64_t(1) << 63;
+
+      // multiply significands
+      uint64_t a0 = srcA.m_significand[0];
+      uint64_t a1 = srcA.m_significand[1];
+      uint64_t b0 = srcB.m_significand[0];
+      uint64_t b1 = srcB.m_significand[1];
+
+      uint64_t x00_h;         _umul128(a0, b0, &x00_h);
+      uint64_t x10_h, x10_l = _umul128(a1, b0, &x10_h);
+      uint64_t x1_l = x00_h + x10_l;
+      uint64_t x2_l = x10_h + (x1_l < x10_l);
+
+      uint64_t x01_h, x01_l = _umul128(a0, b1, &x01_h);
+      uint64_t x11_h, x11_l = _umul128(a1, b1, &x11_h);
+      uint64_t x0_h = x01_l;
+      uint64_t x1_h = x01_h + x11_l;
+      uint64_t x2_h = x11_h + (x1_h < x11_l);
+
+      uint64_t x1 = x1_l + x0_h;
+      x2_l  += (x1 < x0_h); // this addition never produces carry, because previous value of x2_l <= 2^64-2
+      uint64_t x2 = x2_l + x1_h;
+      uint64_t x3 = x2_h + (x2 < x1_h);
+
+      if (x3 < BIT_63) {
+        // shift to the left
+        x3 = (x3 << 1) | (x2 >> 63);
+        x2 = (x2 << 1) | (x1 >> 63);
+        expR -= 1;
+      }
+
+      if (expR > max_biased_exponent) {
+        expR = inf_nan_biased_exponent; // not sure about it
+        x3 = x2 = 0;
+      }
+      if (expR < min_biased_exponent) {
+        expR = zero_biased_exponent;
+        x3 = x2 = 0;
+      }
+
+      dst.m_exponent      = static_cast<uint32_t>(expR);
+      dst.m_significand[0] = x2;
+      dst.m_significand[1] = x3;
+    } else { // a==0 || b==0
+      dst.m_exponent      = zero_biased_exponent;
+      dst.m_significand[0] = 0;
+      dst.m_significand[1] = 0;
+    }
+    dst.m_sign = srcA.m_sign ^ srcB.m_sign;
+  } else {
+    eval_non_finite(dst, srcA, srcB, 0, multiply_nfo_tab);
+  }
+}
+
 static const uint8_t reciprocalTab[] = {
  254, 250, 246, 243, 239, 236, 232, 229,
  226, 223, 220, 217, 214, 211, 209, 206,

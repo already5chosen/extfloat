@@ -511,26 +511,31 @@ void extfloat128_t::acc_t::maddsub(const extfloat128_t& a, const extfloat128_t& 
   }
 }
 
-void extfloat128_t::acc_t::round_to_nearest_tie_to_even()
+ // return value: -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
+int extfloat128_t::acc_t::round_to_nearest_tie_to_even()
 {
+  int ret = 0;
   uint64_t e = m_exponent;
   if (e < exponent_bias+319) {
     if (e > exponent_bias-(NBITS_MAX-320)) {
       if (!m_isNormal)
         doNormalizeSign();
-      unsigned oneBitPos = exponent_bias + 319 - e;
-      uint64_t g = m_significand[oneBitPos/64] & (uint64_t(1) << (oneBitPos%64)); // in order to break tie toward even
-      unsigned halfBitPos    = oneBitPos - 1;
+      unsigned halfBitPos = exponent_bias + 318 - e;
       unsigned halfWordPos   = halfBitPos / 64;
       unsigned halfInWordPos = halfBitPos % 64;
+      unsigned oneBitPos  = halfBitPos + 1;
+      uint64_t lsbits = 0;
       for (unsigned i = 0; i < halfWordPos; ++i) {
-        g |= m_significand[i];
+        lsbits |= m_significand[i];
         m_significand[i] = 0;
       }
       uint64_t hw = m_significand[halfWordPos];
-      uint64_t hg = (hw << (63-halfInWordPos)) | (g != 0);
+      uint64_t hg = (hw << (63-halfInWordPos)) | (lsbits != 0);
       hw &= (uint64_t(-2) << halfInWordPos);
       m_significand[halfWordPos] = hw;
+      ret = (hg == 0) ? 0 : -1; // rounded toward zero
+      uint64_t odd = (m_significand[oneBitPos/64] >> (oneBitPos%64)) & 1;
+      hg |= odd; // in order to break tie toward even
       if (hg > (uint64_t(1) << 63)) {
         // add 1
         uint64_t inc = (uint64_t(1) << (oneBitPos%64));
@@ -544,13 +549,16 @@ void extfloat128_t::acc_t::round_to_nearest_tie_to_even()
         m_isNormal = false;
         if (i == 5)
           doNormalize();
+        ret = 1; // rounded away from zero
       } else if ((m_significand[5] | m_significand[4])==0) {
         clear();
       }
     } else {
+      ret = (e == 0) ? 0 : -1;
       clear();
     }
   }
+  return ret;
 }
 
 static inline uint64_t load_u64(const uint32_t* src) {

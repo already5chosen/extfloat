@@ -7,7 +7,7 @@
 #include "extfloat128_to_bobinf.h"
 #include "bobinf_to_extfloat128.h"
 
-typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<192+64, boost::multiprecision::backends::digit_base_2> > boost_float192_t;
+typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<192+48*1, boost::multiprecision::backends::digit_base_2> > boost_float192_t;
 
 static void pow5(extfloat128_t dst[2], int e)
 {
@@ -25,7 +25,10 @@ static int64_t toDecimalStep(extfloat128_t::acc_t& acc, const extfloat128_t& sca
   tmp.clear();
   extfloat128_t y = acc.trunc();
   while (y >= scale) {
-    y = trunc(y * invScale);
+    // y = trunc(y * invScale);
+    extfloat128_t::eval_multiply_rtz(y, y, invScale);
+    y = trunc(y);
+  // static void eval_multiply_rtz(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB); // round toward zero
     if (is_zero(y))
       y = extfloat128_t::one();
     tmp += y;
@@ -90,8 +93,25 @@ static void pp(extfloat128_t::acc_t x)
 }
 #endif
 
+static extfloat128_t inv(const extfloat128_t& x) {
+  extfloat128_t y = extfloat128_t::one() / x;
+  if (fma(x, y, extfloat128_t::one(1)) > extfloat128_t::zero())
+    y = nextafter(y, 0);
+  return y;
+}
+
+static int64_t divBy10andRound(int64_t x, int roundDir)
+{
+  int64_t xi = x / 10;
+  int xr = x - xi*10;
+  int xr4 = xr*4 - roundDir*2 + (xi & 1);
+  return xi + (xr4 > 20);
+}
+
+int dbg = 0;
 static const extfloat128_t oneE18    = extfloat128_t(int64_t(1000000)*int64_t(1000000)*int64_t(1000000));
-static const extfloat128_t invOneE18 = extfloat128_t::construct(0, -1, uint64_t(-1), uint64_t(-1))/oneE18;
+static const extfloat128_t invOneE18 = inv(oneE18);
+//extfloat128_t::construct(0, -1, uint64_t(-1), uint64_t(-1))/oneE18;
 std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
 {
   const int def_prec   = 41;
@@ -117,16 +137,25 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
     acc.normalize();
     acc.m_exponent += scale10;
     acc.m_sign = 0;
-    acc.round_to_nearest_tie_to_even();
+    if (dbg) {
+      extfloat128_t xx = acc.trunc();
+      extfloat128_t xi = trunc(xx);
+      extfloat128_t xr = xx - xi;
+      printf("%lld %.15f", xi.convert_to_int64(), xr.convert_to_double());
+    }
+    int roundDir = acc.round_to_nearest_tie_to_even();
+    if (dbg)  printf(" roundDir %d ", roundDir);
     int64_t digE18[max_digits/18+2];
-    int nIter = (digits+1)/18;
+    int nIter = (digits+0)/18;
     for (int i = 0; i < nIter; ++i) {
       digE18[i] = toDecimalStep(acc, oneE18, invOneE18);
     }
     if (nIter*18 < digits+1) {
       digE18[nIter] = acc.trunc().convert_to_int64();
+      if (dbg) printf("/%lld %f / \n", digE18[nIter], acc.trunc().convert_to_double());
       ++nIter;
     }
+    if (dbg) printf("digits %d. nIter %d: %lld %lld %lld\n", digits, nIter, digE18[0], digE18[1], digE18[2]);
     // printf("[%d %d %d] %lld %lld %lld\n", exp10, scale10, nIter, digE18[0], digE18[1], digE18[2]);
 
     char* p = &buf[2];
@@ -139,13 +168,14 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
       if (remDigits == 18) {
         p += sprintf(p, "%018lld", digE18[0]);
       } else {
-        p += sprintf(p, "%017lld", (digE18[0]+5)/10);
+        p += sprintf(p, "%017lld", divBy10andRound(digE18[0], roundDir));
         exp10 += 1;
       }
     } else {
       int bufDigits = p - &buf[2];
       if (bufDigits > digits + 1) {
-        p += sprintf(p, "%lld", (digE18[0]+5)/10);
+        p = &buf[2];
+        p += sprintf(p, "%lld", divBy10andRound(digE18[0], roundDir));
         exp10 += 1;
       }
     }
