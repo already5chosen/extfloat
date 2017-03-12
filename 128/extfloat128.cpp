@@ -197,6 +197,26 @@ float extfloat128_t::convert_to_float() const
   }
 }
 
+int64_t extfloat128_t::convert_to_int64() const
+{
+  uint32_t exp = m_exponent;
+  if (exp >= exponent_bias && exp < exponent_bias+62) {
+    // range [1..2^63-1]
+    int64_t i = m_significand[1] >> (exponent_bias+63-exp);
+    return m_sign ? -i : i;
+  } else {
+    if (exp < exponent_bias) {
+      // range (-1..1)
+      return 0;
+    } else if (isnan(*this)) {
+      return INT64_MIN;
+    } else {
+      // very big numbers or inf
+      return m_sign ? -INT64_MAX : INT64_MAX;
+    }
+  }
+}
+
 void extfloat128_t::from_double(extfloat128_t* dst, double src) {
   uint64_t usrc;
   memcpy(&usrc, &src, sizeof(usrc));

@@ -120,13 +120,6 @@ static int32_t log10_estimate(const extfloat128_t& x)
   return static_cast<int32_t>(floor(((md-1 - 1e-5) + x._get_exponent()) * LOG10_2));
 }
 
-int64_t extfloat128_t::convert_to_int64() const
-{
-  boost_float192_t b;
-  convert_to_boost_bin_float(&b, *this);
-  return b.convert_to<int64_t>();
-}
-
 #if 0
 static void pp(extfloat128_t::acc_t x)
 {
