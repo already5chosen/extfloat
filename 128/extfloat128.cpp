@@ -1131,6 +1131,7 @@ void extfloat128_t::eval_fma(extfloat128_t& dst, const extfloat128_t& srcA, cons
                   // full cancelation
                   expPr  = min_biased_exponent - 1;
                   signPr = 0; // According to IEEE rules subtraction of two equal numbers results in positive zero
+                  goto assign_pr;
                 }
               }
               zx = 0;
@@ -1234,10 +1235,12 @@ void extfloat128_t::eval_fma(extfloat128_t& dst, const extfloat128_t& srcA, cons
             pr1 |= ((pr0|zx)!=0);
           }
           // round
+          {
           pr1 |= (pr2 & 1);
           uint64_t incr = (pr1 > BIT_63);
           pr2 += incr;
           pr3 += (pr2 < incr);
+          }
           if (pr3 == 0) {
             pr3 = BIT_63;
             expPr += 1;
@@ -1254,6 +1257,7 @@ void extfloat128_t::eval_fma(extfloat128_t& dst, const extfloat128_t& srcA, cons
             expPr = inf_nan_biased_exponent;
             pr2 = pr3 = 0;
           }
+          assign_pr:
           dst.m_significand[0] = pr2;
           dst.m_significand[1] = pr3;
           dst.m_exponent      = expPr;
