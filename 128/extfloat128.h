@@ -336,6 +336,11 @@ inline extfloat128_t operator*(const extfloat128_t& l, const extfloat128_t& r) {
   extfloat128_t::eval_multiply(ret, l, r);
   return ret;
 }
+inline extfloat128_t multiply_rtz(const extfloat128_t& l, const extfloat128_t& r) {
+  extfloat128_t ret;
+  extfloat128_t::eval_multiply_rtz(ret, l, r);
+  return ret;
+}
 inline extfloat128_t operator/(const extfloat128_t& l, const extfloat128_t& r) {
   extfloat128_t ret;
   extfloat128_t::eval_divide(ret, l, r);

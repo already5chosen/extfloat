@@ -52,10 +52,20 @@ static void print(const extfloat128_t& a) {
   printf("%d %11u %016I64x:%016I64x {%d}\n", a.m_sign, a.m_exponent, a.m_significand[1], a.m_significand[0], a._get_exponent());
 }
 
+static extfloat128_t from_string(const char* str)
+{
+  boost_float512_t b(str);
+  extfloat128_t x;
+  convert_from_boost_bin_float(&x, b);
+  return x;
+}
+
 static bool report_mismatch(extfloat128_t a, int64_t n, int prec);
+// static void uu();
 
 int main(int argz, char** argv)
 {
+  // uu();
   if (argz < 4)
   {
     fprintf(stderr,
@@ -121,6 +131,7 @@ int main(int argz, char** argv)
     specialPoints.push_back(nextinout(x, false));
     specialPoints.push_back(nextinout(x, true));
   }
+  specialPoints.push_back(from_string("100000000000000000009999999999999999999"));
 
   std::mt19937_64 rndGen;
   std::uniform_int_distribution<uint64_t> rndDistr(0, uint64_t(-1));
@@ -131,13 +142,13 @@ int main(int argz, char** argv)
   std::ostringstream res, ref;
   int64_t n = 0;
   int64_t nSpecialPoints = specialPoints.size();
-  nIter += nSpecialPoints;
+  nIter += nSpecialPoints*10;
   res << std::scientific;
   ref << std::scientific;
   while (nIter > 0) {
-    if (n < nSpecialPoints) {
-      x = specialPoints[n];
-      prec = 45;
+    if (n < nSpecialPoints*10) {
+      x = specialPoints[n/10];
+      prec = 36+n%10;
     } else {
       prec = make_random_quadfloat(&x, rndGen, rndDistr, minExp, maxExp);
     }
@@ -159,6 +170,24 @@ int main(int argz, char** argv)
 }
 
 extern int dbg;
+// static void uu()
+// {
+  // boost_float512_t B("100000000000000000009999999999999999999");
+  // boost_float128_t b = boost_float128_t(B);
+  // extfloat128_t x;
+  // convert_from_boost_bin_float(&x, b);
+  // std::cout << std::scientific;
+  // std::cout.precision(37);
+  // std::cout << "B " << B << "\n";
+  // std::cout << "b " << b << "\n";
+  // std::cout << "x " << x << "\n";
+  // std::ostringstream uu;
+  // uu.precision(37);
+  // dbg = 1;
+  // uu << x;
+  // dbg = 0;
+// }
+
 static bool report_mismatch(extfloat128_t a, int64_t n, int prec)
 {
   boost_float128_t b;

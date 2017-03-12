@@ -9,6 +9,38 @@
 
 typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<192+48*1, boost::multiprecision::backends::digit_base_2> > boost_float192_t;
 
+class extfloat128_ostream_init_t {
+public:
+  extfloat128_t oneE18[2];
+  extfloat128_t oneE36[2];
+  extfloat128_t oneExx[6][2]; // 1e1, 1e2, 1e4, 1e8, 1e16, 1e32
+  int64_t       oneEyy[18];   // 1e1, 1e2, 1e3, ... 1e18
+  extfloat128_ostream_init_t() {
+    extfloat128_t x = 10;
+    for (int i = 0; i < 6; ++i) {
+      oneExx[i][0] = x;
+      oneExx[i][1] = inv(x);
+      x *= x;
+    }
+    oneE18[0] = oneExx[1][0]*oneExx[4][0];
+    oneE36[0] = oneExx[2][0]*oneExx[5][0];
+    oneE18[1] = inv(oneE18[0]);
+    oneE36[1] = inv(oneE36[0]);
+    int64_t y = 10;
+    for (int i = 0; i < 18; ++i) {
+      oneEyy[i] = y;
+      y *= 10;
+    }
+  }
+  extfloat128_t inv(const extfloat128_t& x) {
+    extfloat128_t y = extfloat128_t::one() / x;
+    if (fma(x, y, extfloat128_t::one(1)) > extfloat128_t::zero())
+      y = nextafter(y, 0);
+    return y;
+  }
+};
+static extfloat128_ostream_init_t tab;
+
 static void pow5(extfloat128_t dst[2], int e)
 {
   boost_float192_t b = pow(boost_float192_t(5), e);
@@ -19,16 +51,53 @@ static void pow5(extfloat128_t dst[2], int e)
   convert_from_boost_bin_float(&dst[1], b);
 }
 
+// input:  x < 1e72
+// result: remdiv[0] = x % 1e36, remdiv[1] = floor(x/1e36)
+static void remdivE36(extfloat128_t remdiv[2], extfloat128_t::acc_t& x)
+{
+  remdiv[1] = extfloat128_t::zero();
+  for (;;) {
+    remdiv[0] = x.trunc();
+    if (remdiv[0] < tab.oneE36[0])
+      break;
+    extfloat128_t t = trunc(multiply_rtz(tab.oneE36[1], remdiv[0]));
+    if (!is_zero(t)) {
+      remdiv[1] += t;
+      x.msub(tab.oneE36[0], t);
+    } else {
+      remdiv[1] += extfloat128_t::one();
+      x -= tab.oneE36[0];
+    }
+  }
+}
+
+// input:  x < 1.1e36
+// result: remdiv[0] = x % 1e18, remdiv[1] = floor(x/1e18)
+static void remdivE18(int64_t remdiv[2], extfloat128_t& x)
+{
+  remdiv[1] = 0;
+  while (x >= tab.oneE18[0]) {
+    extfloat128_t t = trunc(multiply_rtz(tab.oneE18[1], x));
+    if (!is_zero(t)) {
+      remdiv[1] += t.convert_to_int64();
+      x = fma(tab.oneE18[0], -t, x);
+    } else {
+      remdiv[1] += 1;
+      x -= tab.oneE18[0];
+    }
+  }
+  remdiv[0] = x.convert_to_int64();
+}
+
+#if 0
 static int64_t toDecimalStep(extfloat128_t::acc_t& acc, const extfloat128_t& scale, const extfloat128_t& invScale)
 {
   extfloat128_t::acc_t tmp;
   tmp.clear();
   extfloat128_t y = acc.trunc();
   while (y >= scale) {
-    // y = trunc(y * invScale);
     extfloat128_t::eval_multiply_rtz(y, y, invScale);
     y = trunc(y);
-  // static void eval_multiply_rtz(extfloat128_t& dst, const extfloat128_t& srcA, const extfloat128_t& srcB); // round toward zero
     if (is_zero(y))
       y = extfloat128_t::one();
     tmp += y;
@@ -37,25 +106,6 @@ static int64_t toDecimalStep(extfloat128_t::acc_t& acc, const extfloat128_t& sca
   }
   acc = tmp;
   return y.convert_to_int64();
-}
-
-#if 0
-static int32_t toDecimalStep(extfloat128_t::acc_t& acc, const extfloat128_t scale)
-{
-  extfloat128_t y = acc.trunc();
-  acc -= y;
-  extfloat128_t::acc_t tmp;
-  tmp.mulx(y, scale);
-  extfloat128_t yt = trunc(tmp.trunc());
-  tmp -= yt;
-  double dt = yt.convert_to_double();
-  y = acc.round();
-  tmp.madd(y, scale);
-  yt = trunc(tmp.trunc());
-  tmp -= yt;
-  dt += yt.convert_to_double();
-  acc = tmp;
-  return uint32_t((int64_t(dt)));
 }
 #endif
 
@@ -93,13 +143,6 @@ static void pp(extfloat128_t::acc_t x)
 }
 #endif
 
-static extfloat128_t inv(const extfloat128_t& x) {
-  extfloat128_t y = extfloat128_t::one() / x;
-  if (fma(x, y, extfloat128_t::one(1)) > extfloat128_t::zero())
-    y = nextafter(y, 0);
-  return y;
-}
-
 static int64_t divBy10andRound(int64_t x, int roundDir)
 {
   int64_t xi = x / 10;
@@ -109,9 +152,76 @@ static int64_t divBy10andRound(int64_t x, int roundDir)
 }
 
 int dbg = 0;
-static const extfloat128_t oneE18    = extfloat128_t(int64_t(1000000)*int64_t(1000000)*int64_t(1000000));
-static const extfloat128_t invOneE18 = inv(oneE18);
-//extfloat128_t::construct(0, -1, uint64_t(-1), uint64_t(-1))/oneE18;
+
+static int scalebyPow10(extfloat128_t::acc_t* dst, const extfloat128_t& x, int32_t scale10)
+{
+  extfloat128_t mult[2];
+  pow5(mult, scale10);
+  dst->mulx(mult[0], x);
+  dst->madd(mult[1], x);
+  dst->normalize();
+  dst->m_exponent += scale10;
+  dst->m_sign = 0;
+  if (dbg) {
+    extfloat128_t xx = dst->trunc();
+    extfloat128_t xi = trunc(xx);
+    extfloat128_t xr = xx - xi;
+    printf("%18e %.15f scale10=%d\n", xi.convert_to_double(), xr.convert_to_double(), scale10);
+  }
+  return dst->round_to_nearest_tie_to_even();
+}
+
+// scale10 in range [-38..-1]
+// return value: -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
+static int scalebyPow10_smallNeg(extfloat128_t::acc_t* dst, extfloat128_t x, int scale10)
+{
+  x.m_sign = 0;
+  *dst = x;
+  int roundDir = dst->round_to_nearest_tie_to_even();
+  x = dst->trunc();
+  for (int powlog = 5; scale10 < 0; --powlog) {
+    int pow = 1 << powlog;
+    if (pow + scale10 <= 0) {
+// if (dbg) printf("scale10=%d, x=%e * %e / %e\n", scale10, x.convert_to_double(), tab.oneExx[powlog][0].convert_to_double(), tab.oneExx[powlog][1].convert_to_double());
+      scale10 += pow;
+      // divide
+      extfloat128_t div = extfloat128_t::zero();
+      extfloat128_t rem = x;
+      while (rem >= tab.oneExx[powlog][0]) {
+        extfloat128_t inc = trunc(multiply_rtz(rem, tab.oneExx[powlog][1]));
+        if (is_zero(inc))
+          inc = extfloat128_t::one();
+        div += inc;
+        rem = fma(-div, tab.oneExx[powlog][0], x);
+      }
+      rem = round(rem);
+if (dbg) printf(" x %e; div %e; rem %e %d %d scale %e: %d\n", x.convert_to_double(), div.convert_to_double(), rem.convert_to_double(), is_zero(rem), rem._get_exponent(), tab.oneExx[powlog][0].convert_to_double(), roundDir);
+      if (!is_zero(rem)) {
+        extfloat128_t rem2 = extfloat128_t::ldexp(rem, 1);
+        if (rem2 >= tab.oneExx[powlog][0]) {
+          if (rem2 > tab.oneExx[powlog][0]) {
+            roundDir = 1;
+          } else if (roundDir == 0) {
+            // a tie
+            roundDir = is_zero(mod_pow2(div, 1)) ? -1 : 1; // round to even
+          } else {
+            roundDir = -roundDir;
+          }
+          if (roundDir > 0)
+            div += extfloat128_t::one();
+        } else {
+          roundDir = -1;
+        }
+      }
+if (dbg) printf(" x %e; div %e; rem %e : %d\n", x.convert_to_double(), div.convert_to_double(), rem.convert_to_double(), roundDir);
+      x = div;
+    }
+  }
+if (dbg) printf("scale10=%d, x=%e\n", scale10, x.convert_to_double());
+  *dst = x;
+  return roundDir;
+}
+
 std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
 {
   const int def_prec   = 41;
@@ -126,59 +236,58 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
   int digits = (prec <= max_digits) ? prec : max_digits;
   char buf[max_prec + 32];
   if (isnormal(x)) {
-// printf("invOneE18=%g\n", invOneE18.convert_to_double());
     int32_t exp10 = log10_estimate(x);
     int32_t scale10 = digits - exp10; // sometimes we'll have one more digit than requested
-    extfloat128_t mult[2];
-    pow5(mult, scale10);
     extfloat128_t::acc_t acc;
-    acc.mulx(mult[0], x);
-    acc.madd(mult[1], x);
-    acc.normalize();
-    acc.m_exponent += scale10;
-    acc.m_sign = 0;
+//    int roundDir = (scale10 < 0 && scale10 > -39 && exp10 < 39) ?
+    int roundDir = (scale10 < 0 && scale10 > -39 && exp10 < 40 && digits < 38) ?
+      scalebyPow10_smallNeg(&acc, x, scale10) :
+      scalebyPow10         (&acc, x, scale10);
     if (dbg) {
-      extfloat128_t xx = acc.trunc();
-      extfloat128_t xi = trunc(xx);
-      extfloat128_t xr = xx - xi;
-      printf("%lld %.15f", xi.convert_to_int64(), xr.convert_to_double());
+      extfloat128_t::acc_t tmp = acc;
+      printf("roundDir %d. acc=%e\n", roundDir, tmp.trunc().convert_to_double());
     }
-    int roundDir = acc.round_to_nearest_tie_to_even();
-    if (dbg)  printf(" roundDir %d ", roundDir);
-    int64_t digE18[max_digits/18+2];
-    int nIter = (digits+0)/18;
-    for (int i = 0; i < nIter; ++i) {
-      digE18[i] = toDecimalStep(acc, oneE18, invOneE18);
+    extfloat128_t digE36[2];
+    int nDigE18 = digits/18 + 1;
+    int nDigE36 = (nDigE18+1)/2;
+    if (nDigE36 > 1)
+      remdivE36(digE36, acc);
+    else
+      digE36[0] = acc.trunc();
+
+    int64_t digE18[4];
+    nDigE36 = nDigE18/2;
+    for (int i = 0; i < nDigE36; ++i)
+      remdivE18(&digE18[i*2], digE36[i]);
+    if (nDigE36*2 < nDigE18)
+      digE18[nDigE36*2] = digE36[nDigE36].convert_to_int64();
+    if (dbg) printf("digits %d. nDigE18 %d: %lld %lld %lld %lld scale10=%d exp10=%d\n", digits, nDigE18, digE18[0], digE18[1], digE18[2], digE18[3], scale10, exp10);
+
+    int msDigits = digits + 1 - (nDigE18-1)*18;
+    bool extraDigit = (digE18[nDigE18-1] >= tab.oneEyy[msDigits-1]); // 1 MS word contains one more decimal digit than requested
+    if (extraDigit) {
+      exp10 += 1;
+      digE18[0] = divBy10andRound(digE18[0], roundDir);
+      if (nDigE18 > 1) {
+        const int64_t oneE17 = tab.oneEyy[17-1];
+        if (digE18[0] >= oneE17) {
+          digE18[0] -= oneE17;
+          // propagate carry
+          digE18[1] += 1;
+          const int64_t oneE18 = tab.oneEyy[18-1];
+          for (int i = 1; i < nDigE18-1 && digE18[i] >= oneE18; ++i) {
+            digE18[i]   -= oneE18;
+            digE18[i+1] += 1;
+          }
+        }
+      }
     }
-    if (nIter*18 < digits+1) {
-      digE18[nIter] = acc.trunc().convert_to_int64();
-      if (dbg) printf("/%lld %f / \n", digE18[nIter], acc.trunc().convert_to_double());
-      ++nIter;
-    }
-    if (dbg) printf("digits %d. nIter %d: %lld %lld %lld\n", digits, nIter, digE18[0], digE18[1], digE18[2]);
-    // printf("[%d %d %d] %lld %lld %lld\n", exp10, scale10, nIter, digE18[0], digE18[1], digE18[2]);
+    if (dbg) printf("Digits %d. nDigE18 %d: %lld %lld %lld %lld scale10=%d exp10=%d\n", digits, nDigE18, digE18[0], digE18[1], digE18[2], digE18[3], scale10, exp10);
 
     char* p = &buf[2];
-    p += sprintf(p, "%lld", digE18[nIter-1]);
-    if (nIter > 1) {
-      for (int i = 2; i < nIter; ++i)
-        p += sprintf(p, "%018lld", digE18[nIter-i]);
-      int bufDigits = p - &buf[2];
-      int remDigits = digits + 1 - bufDigits;
-      if (remDigits == 18) {
-        p += sprintf(p, "%018lld", digE18[0]);
-      } else {
-        p += sprintf(p, "%017lld", divBy10andRound(digE18[0], roundDir));
-        exp10 += 1;
-      }
-    } else {
-      int bufDigits = p - &buf[2];
-      if (bufDigits > digits + 1) {
-        p = &buf[2];
-        p += sprintf(p, "%lld", divBy10andRound(digE18[0], roundDir));
-        exp10 += 1;
-      }
-    }
+    p += sprintf(p, "%lld", digE18[nDigE18-1]);
+    for (int i = nDigE18-2; i >= 0; --i)
+      p += sprintf(p, ((i == 0 && extraDigit) ? "%017lld" :  "%018lld"), digE18[i]);
     if (digits < prec) {
       memset(p, '0', prec-digits);
       p += prec-digits;
