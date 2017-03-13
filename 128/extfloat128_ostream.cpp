@@ -83,14 +83,14 @@ static void remdivE18(int64_t remdiv[2], extfloat128_t& x)
   while (x >= tab.oneE18[0]) {
     extfloat128_t t = trunc(multiply_rtz(tab.oneE18[1], x));
     if (!is_zero(t)) {
-      remdiv[1] += t.convert_to_int64();
+      remdiv[1] += t.convert_to_uint64();
       x = fma(tab.oneE18[0], -t, x);
     } else {
       remdiv[1] += 1;
       x -= tab.oneE18[0];
     }
   }
-  remdiv[0] = x.convert_to_int64();
+  remdiv[0] = x.convert_to_uint64();
 }
 
 #if 0
@@ -109,7 +109,7 @@ static int64_t toDecimalStep(extfloat128_t::acc_t& acc, const extfloat128_t& sca
     y = acc.trunc();
   }
   acc = tmp;
-  return y.convert_to_int64();
+  return y.convert_to_uint64();
 }
 #endif
 
@@ -191,61 +191,86 @@ static int scalebyPow10(extfloat128_t::acc_t* dst, const extfloat128_t& x, int32
 
 // scale10 in range [-38..-1]
 // return value: -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
-static int scalebyPow10_smallNeg(extfloat128_t::acc_t* dst, extfloat128_t x, int scale10)
+static int scalebyPow10_small(extfloat128_t::acc_t* dst, extfloat128_t x, int scale10)
 {
   x.m_sign = 0;
   // if (dbg) {
-  //  std::cout << "scalebyPow10_smallNeg("; pp(x); std::cout << "   , " << std::dec << scale10 << ");\n";
+  //  std::cout << "scalebyPow10_small("; pp(x); std::cout << "   , " << std::dec << scale10 << ");\n";
   // }
-  *dst = x;
-  int roundDir = dst->round_to_nearest_tie_to_even();
-  scale10 = -scale10;
-  for (int k = 0; k < 2; ++k) {
-    int ix = (scale10 >> (1-k)*3) & 7;
-    if (ix != 0) {
-      ix = ((1-k)*7 + ix -1); // index in oneExx
-      // divide
-      extfloat128_t::acc_t div; div.clear();
-      extfloat128_t rem = dst->trunc();
-      // int uu = 0;
-      while (rem >= tab.oneExx[ix][0]) {
-        extfloat128_t inc = trunc(multiply_rtz(rem, tab.oneExx[ix][1]));
-        if (!is_zero(inc)) {
-          dst->msub(inc, tab.oneExx[ix][0]);
-          div += inc;
-        } else {
-          *dst -= tab.oneExx[ix][0];
-          div  += extfloat128_t::one();
+  if (scale10 <= 0) {
+    // divide
+    *dst = x;
+    int roundDir = dst->round_to_nearest_tie_to_even();
+    unsigned scale10n = -scale10;
+    int scaleIx = scale10n / 8;
+    for (int k = 7; k >= 0; k -= 7) {
+      if (scaleIx != 0) {
+        int ix = k + scaleIx - 1; // index in oneExx
+        // divide
+        extfloat128_t::acc_t div; div.clear();
+        extfloat128_t rem = dst->trunc();
+        // int uu = 0;
+        while (rem >= tab.oneExx[ix][0]) {
+          extfloat128_t inc = trunc(multiply_rtz(rem, tab.oneExx[ix][1]));
+          if (!is_zero(inc)) {
+            dst->msub(inc, tab.oneExx[ix][0]);
+            div += inc;
+          } else {
+            *dst -= tab.oneExx[ix][0];
+            div  += extfloat128_t::one();
+          }
+          rem = dst->trunc();
+          // ++uu;
+          // if (dbg) {
+            // std::cout << "uu=" << uu << "\n";
+            // std::cout << "div "; pp(div.trunc()); std::cout << "\n";
+            // std::cout << "rem "; pp(rem); std::cout << "\n";
+          // }
+          // if (uu == 10)
+            // break;
         }
-        rem = dst->trunc();
-        // ++uu;
-        // if (dbg) {
-          // std::cout << "uu=" << uu << "\n";
-          // std::cout << "div "; pp(div.trunc()); std::cout << "\n";
-          // std::cout << "rem "; pp(rem); std::cout << "\n";
-        // }
-        // if (uu == 10)
-          // break;
-      }
-      dst->normalize();
-      if (!dst->is_zero()) {
-        *dst -= extfloat128_t::ldexp(tab.oneExx[ix][0], -1);
         dst->normalize();
         if (!dst->is_zero()) {
-          roundDir = dst->m_sign ? -1 : 1;
-        } else if (roundDir == 0) {
-          // a tie
-          roundDir = div.is_odd() ? 1 : -1; // round to even
-        } else {
-          roundDir = -roundDir;
+          *dst -= extfloat128_t::ldexp(tab.oneExx[ix][0], -1);
+          dst->normalize();
+          if (!dst->is_zero()) {
+            roundDir = dst->m_sign ? -1 : 1;
+          } else if (roundDir == 0) {
+            // a tie
+            roundDir = div.is_odd() ? 1 : -1; // round to even
+          } else {
+            roundDir = -roundDir;
+          }
+          if (roundDir > 0)
+            div += extfloat128_t::one();
         }
-        if (roundDir > 0)
-          div += extfloat128_t::one();
+        *dst = div;
       }
-      *dst = div;
+      scaleIx = scale10n % 8;
     }
+    return roundDir;
+  } else {
+    // multiply
+    unsigned scale10p = scale10;
+    int scaleIL = scale10p % 8;
+    int scaleIH = scale10p / 8;
+    if (scaleIL != 0) {
+      int ix = scaleIL - 1;   // index in oneExx
+      dst->mulx(x, tab.oneExx[ix][0]);
+      if (scaleIH != 0) {
+        ix = 7 + scaleIH - 1; // index in oneExx
+        extfloat128_t a = dst->trunc();
+        *dst -= a;
+        extfloat128_t b = dst->trunc();
+        dst->mulx(a, tab.oneExx[ix][0]);
+        dst->madd(b, tab.oneExx[ix][0]);
+      }
+    } else {
+      int ix = 7 + scaleIH - 1; // index in oneExx
+      dst->mulx(x, tab.oneExx[ix][0]);
+    }
+    return dst->round_to_nearest_tie_to_even();
   }
-  return roundDir;
 }
 
 std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
@@ -265,9 +290,9 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
     int32_t exp10 = log10_estimate(x);
     int32_t scale10 = digits - exp10; // sometimes we'll have one more digit than requested
     extfloat128_t::acc_t acc;
-    int roundDir = (scale10 <= 0 && scale10 > -56) ?
-      scalebyPow10_smallNeg(&acc, x, scale10) :
-      scalebyPow10         (&acc, x, scale10);
+    int roundDir = (scale10 > -56 && scale10 < 56) ?
+      scalebyPow10_small(&acc, x, scale10) :
+      scalebyPow10      (&acc, x, scale10);
     extfloat128_t digE36[2];
     int nDigE18 = digits/18 + 1;
     int nDigE36 = (nDigE18+1)/2;
@@ -281,7 +306,7 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
     for (int i = 0; i < nDigE36; ++i)
       remdivE18(&digE18[i*2], digE36[i]);
     if (nDigE36*2 < nDigE18)
-      digE18[nDigE36*2] = digE36[nDigE36].convert_to_int64();
+      digE18[nDigE36*2] = digE36[nDigE36].convert_to_uint64();
     // if (dbg) printf("digits %d. nDigE18 %d: %lld %lld %lld %lld scale10=%d exp10=%d\n", digits, nDigE18, digE18[0], digE18[1], digE18[2], digE18[3], scale10, exp10);
 
     int msDigits = digits + 1 - (nDigE18-1)*18;
@@ -290,16 +315,17 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
       exp10 += 1;
       digE18[0] = divBy10andRound(digE18[0], roundDir);
       if (nDigE18 > 1) {
-        const int64_t oneE17 = tab.oneEyy[17-1];
-        if (digE18[0] >= oneE17) {
-          digE18[0] -= oneE17;
-          // propagate carry
-          digE18[1] += 1;
-          const int64_t oneE18 = tab.oneEyy[18-1];
-          for (int i = 1; i < nDigE18-1 && digE18[i] >= oneE18; ++i) {
-            digE18[i]   -= oneE18;
-            digE18[i+1] += 1;
-          }
+        if (msDigits == 18) {
+          // keep digE18[] values in range [0..1E18-1]
+          digE18[nDigE18-1] -= tab.oneEyy[18-1];
+          digE18[nDigE18] = 1;
+          nDigE18 += 1;
+        }
+        int64_t maxVal = tab.oneEyy[17-1]; // 1e17
+        for (int i = 0; digE18[i] >= maxVal; ++i) {
+          digE18[i]   -= maxVal;
+          digE18[i+1] += 1;          // propagate carry
+          maxVal = tab.oneEyy[18-1]; // for all, but the least significant digit, the limit = 1e18
         }
       }
     }

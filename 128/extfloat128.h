@@ -55,6 +55,7 @@ public:
   double convert_to_double() const;
   float  convert_to_float() const;
   int64_t convert_to_int64() const;
+  uint64_t convert_to_uint64() const;
   extfloat128_t sqrt() const {
     extfloat128_t res;
     eval_sqrt(res, *this);

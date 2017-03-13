@@ -200,7 +200,7 @@ float extfloat128_t::convert_to_float() const
 int64_t extfloat128_t::convert_to_int64() const
 {
   uint32_t exp = m_exponent;
-  if (exp >= exponent_bias && exp < exponent_bias+62) {
+  if (exp >= exponent_bias && exp <= exponent_bias+62) {
     // range [1..2^63-1]
     int64_t i = m_significand[1] >> (exponent_bias+63-exp);
     return m_sign ? -i : i;
@@ -215,6 +215,20 @@ int64_t extfloat128_t::convert_to_int64() const
       return m_sign ? -INT64_MAX : INT64_MAX;
     }
   }
+}
+
+uint64_t extfloat128_t::convert_to_uint64() const
+{
+  if (m_sign == 0) {
+    uint32_t exp = m_exponent;
+    if (exp >= exponent_bias) {
+      if (exp <= exponent_bias+63)
+        return m_significand[1] >> (exponent_bias+63-exp);
+      else
+        return UINT64_MAX;
+    }
+  }
+  return 0;
 }
 
 void extfloat128_t::from_double(extfloat128_t* dst, double src) {
