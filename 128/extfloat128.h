@@ -297,6 +297,10 @@ public:
     extfloat128_t to_extfloat128_t(bool bRound) ; // if (bRound) round to nearest otherwise truncate
     extfloat128_t round() { return to_extfloat128_t(true);  }
     extfloat128_t trunc() { return to_extfloat128_t(false); }
+    bool is_zero()        const { // valid only for normalized objects
+      return m_exponent==0; 
+    }
+    bool is_odd() const;
 
     // representation
     static const uint64_t exponent_bias = (uint64_t(1)<<63)-1;

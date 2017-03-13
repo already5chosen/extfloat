@@ -700,3 +700,13 @@ extfloat128_t extfloat128_t::acc_t::to_extfloat128_t(bool bRound)
   ret.m_sign           = m_sign;
   return ret;
 }
+
+bool extfloat128_t::acc_t::is_odd() const
+{
+  uint64_t e = m_exponent;
+  if (e <= exponent_bias+319 && e > exponent_bias-(NBITS_MAX-320)) {
+    unsigned oneBitPos = exponent_bias + 319 - e;
+    return (m_significand[oneBitPos/64] >> (oneBitPos%64)) & 1;
+  }
+  return 0;
+}
