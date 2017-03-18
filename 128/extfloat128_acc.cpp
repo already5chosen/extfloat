@@ -511,7 +511,108 @@ void extfloat128_t::acc_t::maddsub(const extfloat128_t& a, const extfloat128_t& 
   }
 }
 
- // return value: -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
+// operator*=(const extfloat128_t& a) - multiply by extfloat128_t
+// This function is not very fast and result cann be off by 2-3 LS bits, although average error is smaller
+void extfloat128_t::acc_t::operator*=(const extfloat128_t& a)
+{
+  if (isnormal(a)) {
+    normalize();
+    uint64_t mulxx[2][5];
+    for (int k = 0; k < 2; ++k) {
+      uint64_t* dst = mulxx[k];
+      uint64_t aw = a.m_significand[1-k];
+      uint64_t xh, xl;
+      xl = _umul128(m_significand[k], aw, &xh);
+      uint64_t xx = xh + (xl >> 63);
+      for (int i = k + 1; i < 5; ++i) {
+        xl = _umul128(m_significand[i], aw, &xh);
+        xl += xx;
+        *dst++ = xl;
+        xx = xh + (xl < xx);
+      }
+      *dst = xx;
+    }
+    uint64_t m0 = mulxx[0][0];
+    uint64_t m1 = mulxx[1][0];
+    m1 += m0;
+    uint64_t c = (m1 < m0);
+    m_significand[0] = m1;
+    for (int k = 1; k < 4; ++k) {
+      m0 = mulxx[0][k] + c;
+      m1 = mulxx[1][k] + m0;
+      c = (m1 < m0) | (m0 < c);
+      m_significand[k] = m1;
+    }
+    m_significand[4] = mulxx[0][4] + c;
+    m_exponent += a.m_exponent;
+    m_exponent -= a.exponent_bias - 1;
+    m_sign     ^= a.m_sign;
+
+    // Normalize, do it here because here it's so easy
+    const uint64_t BIT_63 = uint64_t(1)<<63;
+    uint64_t y4 = m_significand[4];
+    if ((y4 & BIT_63)==0) {
+      uint64_t y3 = m_significand[3];
+      uint64_t y2 = m_significand[2];
+      uint64_t y1 = m_significand[1];
+      uint64_t y0 = m_significand[0];
+      m_significand[4] = (y4 << 1) | (y3 >> 63);
+      m_significand[3] = (y3 << 1) | (y2 >> 63);
+      m_significand[2] = (y2 << 1) | (y1 >> 63);
+      m_significand[1] = (y1 << 1) | (y0 >> 63);
+      m_significand[0] = (y0 << 1);
+      m_exponent -= 1;
+    }
+  } else {
+    if (::is_zero(a)) {
+      clear();
+    } else {
+      // extfloat128_t::acc_t has no support for special values, so just return something big
+      m_exponent = (exponent_bias - a.exponent_bias)*2;
+      m_significand[4] = uint64_t(-1);
+      m_significand[5] = 0;
+    }
+  }
+}
+
+// operator/=(const extfloat128_t& a) - multiply by extfloat128_t
+// slower than the rest of extfloat128_t::acc_t operations
+// result can be off by 1 LS bit
+void extfloat128_t::acc_t::operator/=(const extfloat128_t& a)
+{
+  normalize();
+  if (!is_zero()) {
+    if (isnormal(a)) {
+      uint64_t e = m_exponent;
+      extfloat128_t a0 = a;
+      // to avoid exponent overflow set both exponebts to the moddle of the range
+      m_exponent    = exponent_bias;
+      a0.m_exponent = a0.exponent_bias;
+      extfloat128_t::acc_t acc;
+      acc.clear();
+      do {
+        extfloat128_t x = trunc()/a0;
+        acc += x;
+        this->msub(x, a0);
+        normalize();
+      } while (m_exponent >= exponent_bias - 320);
+      acc.m_exponent += e - exponent_bias + a0.exponent_bias - a.m_exponent;
+      *this = acc;
+    } else {
+      if (::is_zero(a)) {
+        // extfloat128_t::acc_t has no support for special values, so just return something big
+        m_exponent = (exponent_bias - a.exponent_bias)*2;
+        m_significand[4] = uint64_t(-1);
+        m_significand[5] = 0;
+      } else {
+        clear();
+      }
+    }
+  }
+}
+
+
+// return value: -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
 int extfloat128_t::acc_t::round_to_nearest_tie_to_even()
 {
   int ret = 0;

@@ -289,6 +289,8 @@ public:
     void negate() {
       m_sign ^= 1;
     }
+    void operator*=(const extfloat128_t& a); // not very fast, can be off by 2-3 LS bits, although average error is smaller
+    void operator/=(const extfloat128_t& a); // slower than the rest of operations, can be off by 1 LS bit
     int round_to_nearest_tie_to_even(); // return -1 if rounded toward 0, 1 if rounded away from zero, 0 if unchanged
     // fix-point arithmetic
     void fix_mulx5(const extfloat128_t& a, const uint32_t b[7*2], int b_exponent);
@@ -299,7 +301,7 @@ public:
     extfloat128_t round() { return to_extfloat128_t(true);  }
     extfloat128_t trunc() { return to_extfloat128_t(false); }
     bool is_zero()        const { // valid only for normalized objects
-      return m_exponent==0; 
+      return m_exponent==0;
     }
     bool is_odd() const;
 

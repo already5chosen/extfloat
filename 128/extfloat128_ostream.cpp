@@ -15,9 +15,11 @@ public:
   extfloat128_t oneE36[2];
   extfloat128_t oneExx[7*2][2]; // 1e1, 1e2, 1e3,..., 1e7,  1e8, 1e16, 1e24, ..., 1e56
   int64_t       oneEyy[18];     // 1e1, 1e2, 1e3, ... 1e18
-  extfloat128_t ln1_25[2];      // log(1.25) with > 256 bit precision
-  extfloat128_t ln2[2];         // log(2)    with > 256 bit precision
+  extfloat128_t ln10[2];        // log(10) with > 256 bit precision
+  extfloat128_t ln2[2];         // log(2)  with > 256 bit precision
   extfloat128_t expTab[8][7][2];
+  extfloat128_t expPoly[5];     // 1/8!, 1/7!, 1/6!, 1/5!, 1/4!
+  extfloat128_t::acc_t expPoly3; // 1/3!
 
   extfloat128_ostream_init_t() {
     extfloat128_t x = 10;
@@ -40,17 +42,18 @@ public:
       y *= 10;
     }
 
-    // log_(ln1_25, 1.25);
+    // log_(ln10, 10);
     // log_(ln2,    2.0);
-    // printf("%d %d %016llx %016llx\n", ln1_25[0].m_sign, ln1_25[0]._get_exponent(), ln1_25[0].m_significand[1], ln1_25[0].m_significand[0]);
-    // printf("%d %d %016llx %016llx\n", ln1_25[1].m_sign, ln1_25[1]._get_exponent(), ln1_25[1].m_significand[1], ln1_25[1].m_significand[0]);
+    // printf("%d %d %016llx %016llx\n", ln10[0].m_sign, ln10[0]._get_exponent(), ln10[0].m_significand[1], ln10[0].m_significand[0]);
+    // printf("%d %d %016llx %016llx\n", ln10[1].m_sign, ln10[1]._get_exponent(), ln10[1].m_significand[1], ln10[1].m_significand[0]);
     // printf("%d %d %016llx %016llx\n", ln2[0].m_sign, ln2[0]._get_exponent(), ln2[0].m_significand[1], ln2[0].m_significand[0]);
     // printf("%d %d %016llx %016llx\n", ln2[1].m_sign, ln2[1]._get_exponent(), ln2[1].m_significand[1], ln2[1].m_significand[0]);
-    ln1_25[0] = ln1_25[0].construct(0, -3,   0xe47fbe3cd4d10d61, 0x2ec0f797fdcd1257);
-    ln1_25[1] = ln1_25[1].construct(0, -134, 0xecbd4e8235b8362e, 0x1e267eac97f8e8d4);
-    ln2[0]    = ln2   [0].construct(0, -1,   0xb17217f7d1cf79ab, 0xc9e3b39803f2f6af);
-    ln2[1]    = ln2   [1].construct(0, -130, 0x81e6864ce5316c5b, 0x141a2eb71755f458);
+    ln10[0] = ln10[0].construct(0, 1,    0x935d8dddaaa8ac16, 0xea56d62b82d30a29);
+    ln10[1] = ln10[1].construct(1, -130, 0xeb8098312d10378b, 0xe1cf0beff07e9490);
+    ln2[0]  = ln2 [0].construct(0, -1,   0xb17217f7d1cf79ab, 0xc9e3b39803f2f6af);
+    ln2[1]  = ln2 [1].construct(0, -130, 0x81e6864ce5316c5b, 0x141a2eb71755f458);
 
+    #if 0
     for (int k = 0; k < 8; ++k) {
       for (int i = 0; i < 7; ++i) {
         boost_float256_t b = exp(boost_float256_t(ldexp(i+1.0, -3*(k+1))));
@@ -62,6 +65,45 @@ public:
         convert_from_boost_bin_float(&expTab[k][i][1], b);
       }
     }
+    #else
+    boost_float256_t b = exp(boost_float256_t(ldexp(1.0, -25)));
+    extfloat128_t::acc_t ex0;
+    ex0.clear();
+    for (int k = 0; k < 3; ++k) {
+      extfloat128_t x;
+      convert_from_boost_bin_float(&x, b);
+      ex0 += x;
+      boost_float256_t b1;
+      convert_to_boost_bin_float(&b1, x);
+      b -= b1;
+    }
+
+    extfloat128_t::acc_t ex[7];
+    for (int k = 7; k >= 0; --k) {
+      ex[1-1] = mult(ex0, ex0);
+      ex[2-1] = mult(ex[1-1], ex[1-1]);
+      ex[3-1] = mult(ex[2-1], ex[1-1]);
+      ex[4-1] = mult(ex[2-1], ex[2-1]);
+      ex[5-1] = mult(ex[4-1], ex[1-1]);
+      ex[6-1] = mult(ex[4-1], ex[2-1]);
+      ex[7-1] = mult(ex[4-1], ex[3-1]);
+      ex0 = ex[4-1];
+      for (int i = 0; i < 7; ++i) {
+        expTab[k][i][0] = ex[i].round();
+        ex[i] -= expTab[k][i][0];
+        ex[i] /= expTab[k][i][0];  // ex[i]/expTab[k][i][0] - 1, calculated in more precise way
+        expTab[k][i][1] = ex[i].round();
+      }
+    }
+    #endif
+
+    int fact = 24;
+    for (int k = 0; k < 5; ++k) {
+      expPoly[4-k] = extfloat128_t::one() / fact;
+      fact *= k + 5;
+    }
+    expPoly3 = extfloat128_t::one();
+    expPoly3 /= 6;
   }
   extfloat128_t inv(const extfloat128_t& x) {
     extfloat128_t y = extfloat128_t::one() / x;
@@ -69,6 +111,31 @@ public:
       y = nextafter(y, 0);
     return y;
   }
+
+  static void split(extfloat128_t dst[3], extfloat128_t::acc_t x)
+  {
+    dst[2] = x.trunc();
+    x -= dst[2];
+    dst[1] = x.trunc();
+    x -= dst[1];
+    dst[0] = x.trunc();
+  }
+
+  static extfloat128_t::acc_t mult(const extfloat128_t::acc_t& a, const extfloat128_t::acc_t& b)
+  {
+    extfloat128_t x[2][3];
+    split(x[0], a);
+    split(x[1], b);
+    extfloat128_t::acc_t prod;
+    prod.clear();
+    for (int i = 0; i < 3; ++i) {
+      for (int k = 0; k < 3; ++k) {
+        prod.madd(x[0][i], x[1][k]);
+      }
+    }
+    return prod;
+  }
+
   // void log_(extfloat128_t dst[2], double x)
   // {
     // boost_float256_t b = log(boost_float256_t(x));
@@ -80,16 +147,6 @@ public:
   // }
 };
 static extfloat128_ostream_init_t tab;
-
-// static void pow5_4th(extfloat128_t dst[2], int e)
-// {
-  // boost_float256_t b = pow(boost_float256_t(5.0/4), e);
-  // convert_from_boost_bin_float(&dst[0], b);
-  // boost_float256_t b1;
-  // convert_to_boost_bin_float(&b1, dst[0]);
-  // b -= b1;
-  // convert_from_boost_bin_float(&dst[1], b);
-// }
 
 // input:  x < 1e72
 // result: remdiv[0] = x % 1e36, remdiv[1] = floor(x/1e36)
@@ -207,89 +264,59 @@ static int64_t divBy10andRound(int64_t x, int roundDir)
 
 int dbg = 0;
 
-// x in range [0..log(2)+eps]
-static void exp(extfloat128_t dst[2], extfloat128_t x)
+// src in range [0..log(2)+eps]
+// return exp(src) with precision of 216 bits or better (65 decimal digits)
+static extfloat128_t::acc_t exp216(extfloat128_t::acc_t& src)
 {
-  // if (dbg) printf("exp(%.4e) = ", x.convert_to_double());
+  extfloat128_t x = src.trunc();
+  src -= x;
+  extfloat128_t adj = src.trunc();
+
   extfloat128_t xh = trunc(extfloat128_t::ldexp(x, 24));
   unsigned msbits = xh.convert_to_uint64();
   if (msbits > 0)
     x -= extfloat128_t::ldexp(xh, -24);
 
-  boost_float256_t b;
-  convert_to_boost_bin_float(&b, x);
-  b = exp(b);
-  // if (dbg) std::cout << b << "\n";
+  extfloat128_t xy = tab.expPoly[0];
+  for (int i = 1; i < 5; ++i)
+    xy = fma(xy, x, tab.expPoly[i]);
 
-  convert_from_boost_bin_float(&dst[0], b);
-  boost_float256_t b1;
-  convert_to_boost_bin_float(&b1, dst[0]);
-  b -= b1;
-  convert_from_boost_bin_float(&dst[1], b);
+  extfloat128_t::acc_t res = tab.expPoly3;
+  res.madd(xy, x);
+  res *= x;
+  res += extfloat128_t::pow2(-1); // += 0.5
+  res *= x;
+  res += extfloat128_t::one();
+  res *= x;
+  res += extfloat128_t::one();
 
-  extfloat128_t::acc_t acc;
-  acc  = dst[0];
-  acc += dst[1];
   if (msbits > 0) {
-    extfloat128_t adj = extfloat128_t::zero();
     for (int k = 0; k < 8; ++k) {
       unsigned idx = msbits & 7;
       if (idx != 0) {
-        dst[0] = acc.trunc();
-        acc -= dst[0];
-        dst[1] = acc.trunc();
-        acc.mulx(tab.expTab[7-k][idx-1][0], dst[0]);
-        acc.madd(tab.expTab[7-k][idx-1][0], dst[1]);
+        res *= tab.expTab[7-k][idx-1][0];
         adj += tab.expTab[7-k][idx-1][1];
       }
       msbits >>= 3;
     }
-    // acc *= (1+adj) where adj is very small
-    dst[0] = acc.round();
-    acc.madd(adj, dst[0]);
   }
-
-  // extfloat128_t::acc_t tmp;
-  // tmp  = dst[0];
-  // tmp += dst[1];
-  // tmp -= extfloat128_t::one();
-  // tmp.normalize();
-  // tmp.m_significand[0]=0;
-  // tmp.m_significand[1] &= uint64_t(-1) << 41;
-  // tmp += extfloat128_t::one();
-  dst[0] = acc.round();
-  acc -= dst[0];
-  dst[1] = acc.trunc();
+  // res *= (1+adj) where adj is very small
+  res.madd(adj, res.round());
+  return res;
 }
 
 static int scalebyPow10(extfloat128_t::acc_t* dst, const extfloat128_t& x, int32_t scale10)
 {
-  static const double LOG2_1_25 = 0.32192809488736234787031942948939;
-  int scale2 = int(floor(scale10*LOG2_1_25));
+  static const double LOG2_10 = 3.3219280948873623478703194294894;
+  int64_t scale2 = int64_t(floor(scale10*LOG2_10-1e-5));
   extfloat128_t::acc_t ln;
-  ln.mulx(tab.ln1_25[0], scale10);
-  ln.madd(tab.ln1_25[1], scale10);
-  ln.msub(tab.ln2[0],    scale2);
-  ln.msub(tab.ln2[1],    scale2);
-  extfloat128_t ln_h = ln.round();
-  if (ln_h.m_sign) {
-    scale2 -= 1;
-    ln += tab.ln2[1];
-    ln += tab.ln2[0];
-    ln_h = ln.round();
-  }
-  ln -= ln_h;
-  extfloat128_t mult[2];
-  exp(mult, ln_h);
-  // pow5_4th(mult, scale10);
-  dst->mulx(mult[0], x);
-  dst->madd(mult[1], x);
-  dst->m_exponent += scale10*3;
+  ln.mulx(tab.ln10[0], scale10);
+  ln.madd(tab.ln10[1], scale10);
+  ln.msub(tab.ln2[0],  scale2);
+  ln.msub(tab.ln2[1],  scale2);
+  *dst = exp216(ln);
+  *dst *= x;
   dst->m_exponent += scale2;
-  extfloat128_t ln_l = ln.trunc();
-  extfloat128_t dst_h = dst->round();
-  dst->madd(dst_h, ln_l);
-
   dst->normalize();
   dst->m_sign = 0;
   // if (dbg) {
