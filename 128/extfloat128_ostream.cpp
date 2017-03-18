@@ -3,11 +3,6 @@
 #include <cmath>
 #include <cfloat>
 #include <cstdio>
-#include <boost/multiprecision/cpp_bin_float.hpp>
-#include "extfloat128_to_bobinf.h"
-#include "bobinf_to_extfloat128.h"
-
-typedef boost::multiprecision::number<boost::multiprecision::cpp_bin_float<256, boost::multiprecision::backends::digit_base_2> > boost_float256_t;
 
 class extfloat128_ostream_init_t {
 public:
@@ -53,31 +48,7 @@ public:
     ln2[0]  = ln2 [0].construct(0, -1,   0xb17217f7d1cf79ab, 0xc9e3b39803f2f6af);
     ln2[1]  = ln2 [1].construct(0, -130, 0x81e6864ce5316c5b, 0x141a2eb71755f458);
 
-    #if 0
-    for (int k = 0; k < 8; ++k) {
-      for (int i = 0; i < 7; ++i) {
-        boost_float256_t b = exp(boost_float256_t(ldexp(i+1.0, -3*(k+1))));
-        extfloat128_t x0;
-        convert_from_boost_bin_float(&expTab[k][i][0], b);
-        boost_float256_t b1;
-        convert_to_boost_bin_float(&b1, expTab[k][i][0]);
-        b = (b - b1) / b1; // b/b1 - 1, calculated in more precise way
-        convert_from_boost_bin_float(&expTab[k][i][1], b);
-      }
-    }
-    #else
-    boost_float256_t b = exp(boost_float256_t(ldexp(1.0, -25)));
-    extfloat128_t::acc_t ex0;
-    ex0.clear();
-    for (int k = 0; k < 3; ++k) {
-      extfloat128_t x;
-      convert_from_boost_bin_float(&x, b);
-      ex0 += x;
-      boost_float256_t b1;
-      convert_to_boost_bin_float(&b1, x);
-      b -= b1;
-    }
-
+    extfloat128_t::acc_t ex0 = extfloat128_ostream_init_t::exp(extfloat128_t::pow2(-25));
     extfloat128_t::acc_t ex[7];
     for (int k = 7; k >= 0; --k) {
       ex[1-1] = mult(ex0, ex0);
@@ -95,7 +66,6 @@ public:
         expTab[k][i][1] = ex[i].round();
       }
     }
-    #endif
 
     int fact = 24;
     for (int k = 0; k < 5; ++k) {
@@ -134,6 +104,19 @@ public:
       }
     }
     return prod;
+  }
+
+  // x must be small
+  static extfloat128_t::acc_t exp(const extfloat128_t& x)
+  {
+    extfloat128_t::acc_t res;
+    res = 1;
+    for (int k = 12; k > 0; --k) {
+      res *= x;
+      res /= k;
+      res += 1;
+    }
+    return res;
   }
 
   // void log_(extfloat128_t dst[2], double x)
@@ -230,27 +213,6 @@ static void pp(extfloat128_t::acc_t x)
   ,x.m_significand[0]
   ,x.trunc().convert_to_double()
   );
-}
-#endif
-
-#if 0
-static void pp(const extfloat128_t& x)
-{
-  boost_float256_t b;
-  convert_to_boost_bin_float(&b, x);
-  std::cout.precision(4);
-  std::cout << std::fixed;
-  std::cout << b;
-  std::cout << " ";
-  std::cout << std::scientific;
-  std::cout << b;
-  std::cout << " ";
-  std::cout << std::hex;
-  std::cout << x.m_exponent;
-  std::cout << " ";
-  std::cout << x.m_significand[1];
-  std::cout << "_";
-  std::cout << x.m_significand[0];
 }
 #endif
 
