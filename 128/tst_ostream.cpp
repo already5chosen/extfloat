@@ -169,7 +169,7 @@ int main(int argz, char** argv)
   return 0;
 }
 
-extern int dbg;
+// extern int dbg;
 // static void uu()
 // {
   // boost_float512_t B("100000000000000000009999999999999999999");
@@ -224,10 +224,10 @@ static bool report_mismatch(extfloat128_t a, int64_t n, int prec)
       }
     }
   } catch (...) {}
-  dbg = 1;
+  // dbg = 1;
   res.str("");
   res << a;
-  dbg = 0;
+  // dbg = 0;
 
   if (n >= 0) printf("fail at iteration %I64d.\n", n);
   std::cout << "prec " << prec << "\n";

@@ -224,7 +224,7 @@ static int64_t divBy10andRound(int64_t x, int roundDir)
   return xi + (xr4 > 20);
 }
 
-int dbg = 0;
+// int dbg = 0;
 
 // src in range [0..log(2)+eps]
 // return exp(src) with precision of 216 bits or better (65 decimal digits)
@@ -374,6 +374,26 @@ static int scalebyPow10_small(extfloat128_t::acc_t* dst, extfloat128_t x, int sc
   }
 }
 
+static void PrintDigits(char* dst, const int64_t* digE18, int nDigE18)
+{
+  const uint32_t oneE9 = 1000000000;
+  for (int i = 0; i < nDigE18; ++i) {
+    uint64_t x = digE18[nDigE18-1-i];
+    uint64_t div64 = x / oneE9;
+    uint32_t rem = x  - div64 * oneE9;
+    uint32_t div = div64;
+    for (int k = 0; k < 8; ++k) {
+      uint32_t divd = div + '0'; div /= 10; divd -= div *10;
+      uint32_t remd = rem + '0'; rem /= 10; remd -= rem *10;
+      dst[9*0+8-k] = divd;
+      dst[9*1+8-k] = remd;
+    }
+    dst[9*0] = div + '0';
+    dst[9*1] = rem + '0';
+    dst += 18;
+  }
+}
+
 std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
 {
   const int def_prec   = 41;
@@ -411,6 +431,7 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
     // if (dbg) printf("digits %d. nDigE18 %d: %lld %lld %lld %lld scale10=%d exp10=%d\n", digits, nDigE18, digE18[0], digE18[1], digE18[2], digE18[3], scale10, exp10);
 
     int msDigits = digits + 1 - (nDigE18-1)*18;
+    int extraZero = 0;
     bool extraDigit = (digE18[nDigE18-1] >= tab.oneEyy[msDigits-1]); // 1 MS word contains one more decimal digit than requested
     if (extraDigit) {
       exp10 += 1;
@@ -422,20 +443,20 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
           digE18[nDigE18] = 1;
           nDigE18 += 1;
         }
-        int64_t maxVal = tab.oneEyy[17-1]; // 1e17
+        extraZero = 1;
+        digE18[0] *= 10;
+        int64_t maxVal = tab.oneEyy[18-1]; // 1e17
         for (int i = 0; digE18[i] >= maxVal; ++i) {
           digE18[i]   -= maxVal;
           digE18[i+1] += 1;          // propagate carry
-          maxVal = tab.oneEyy[18-1]; // for all, but the least significant digit, the limit = 1e18
         }
       }
     }
-    // if (dbg) printf("Digits %d. nDigE18 %d: %lld %lld %lld %lld scale10=%d exp10=%d\n", digits, nDigE18, digE18[0], digE18[1], digE18[2], digE18[3], scale10, exp10);
+    // if (dbg) printf("Digits %d. nDigE18 %d: %lld %lld %lld %lld. extraZero=%d scale10=%d exp10=%d\n", digits, nDigE18, digE18[0], digE18[1], digE18[2], digE18[3], extraZero, scale10, exp10);
 
-    char* p = &buf[2];
-    p += sprintf(p, "%lld", digE18[nDigE18-1]);
-    for (int i = nDigE18-2; i >= 0; --i)
-      p += sprintf(p, ((i == 0 && extraDigit) ? "%017lld" :  "%018lld"), digE18[i]);
+    PrintDigits(&buf[2], digE18, nDigE18);
+
+    char* p = &buf[2+18*nDigE18-extraZero];
     if (digits < prec) {
       memset(p, '0', prec-digits);
       p += prec-digits;
@@ -443,10 +464,12 @@ std::ostream& operator<<(std::ostream& os, const extfloat128_t& x)
     *p++ = 'e';
     *p++ = (exp10 < 0) ? '-' : '+';
     sprintf(p, "%02d", abs(exp10));
-    buf[1] = buf[2];
-    buf[2] = '.';
-    buf[0] = '-';
-    os << (x.m_sign ? &buf[0] : &buf[1]);
+
+    char* p0 = &buf[18*nDigE18-extraZero-digits-1];
+    p0[1] = p0[2];
+    p0[2] = '.';
+    p0[0] = '-';
+    os << (x.m_sign ? &p0[0] : &p0[1]);
   } else {
     if (isnan(x)) {
       os << "nan";
