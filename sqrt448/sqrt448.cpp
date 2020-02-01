@@ -230,7 +230,7 @@ static uint64_t rsqrt64(uint64_t x, int e)
   return y64;
 }
 
-void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
+static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
 {
   uint64_t invSx1 = rsqrt64(src[6], exp1); // precision - 62 bits
 
@@ -294,7 +294,6 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
 }
 
 cpp_bin_float_132 my_sqrt(const cpp_bin_float_132& x) {
-  using namespace boost::multiprecision;
   if (x <= 0) {
     return 0; // do whatever you feel correct for negatives
   }
