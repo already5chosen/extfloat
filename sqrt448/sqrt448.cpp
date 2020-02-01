@@ -5,15 +5,21 @@
 
 typedef unsigned __int128 uintx_t;
 
-template<int N>
-void sqrx(uint64_t* r, const uint64_t* a)
-{
+template<int N, int Nr = N>
+void sqrx(
+  uint64_t* r,       // [Nr*2]
+  const uint64_t* a  // [N]
+) {
+  if (Nr < 1 || Nr > N)
+    return;
+
   // first sum up non-diag elements
   uintx_t x01 = uintx_t(a[0])*a[1];
   r[1] = uint64_t(x01);
   uintx_t acc = uint64_t(x01>>64);
 
-  for (int k = 2; k < N; ++k) {
+  const int N1 = Nr*2 < N ? Nr*2 : N;
+  for (int k = 2; k < N1; ++k) {
     uintx_t x = uintx_t(a[0])*a[k];
     acc += uint64_t(x);
     uintx_t accx = uint64_t(x>>64);
@@ -25,7 +31,8 @@ void sqrx(uint64_t* r, const uint64_t* a)
     r[k] = uint64_t(acc);
     acc = accx + uint64_t(acc>>64);
   }
-  for (int k = N; k < N*2-2; ++k) {
+  const int N2 = Nr*2 < N*2-2 ? Nr*2 : N*2-2;
+  for (int k = N1; k < N2; ++k) {
     uintx_t x = uintx_t(a[k+1-N])*a[N-1];
     acc += uint64_t(x);
     uintx_t accx = uint64_t(x>>64);
@@ -37,18 +44,21 @@ void sqrx(uint64_t* r, const uint64_t* a)
     r[k] = uint64_t(acc);
     acc = accx + uint64_t(acc>>64);
   }
-  r[N*2-2] = uint64_t(acc);
+  if (N*2-2 < Nr*2)
+    r[N*2-2] = uint64_t(acc);
   // at that point acc < 2**64
 
   // add diag elements
   uintx_t x00 = uintx_t(a[0])*a[0];
   r[0] = uint64_t(x00);
+
   x00 = uint64_t(x00>>64);
   x00 += r[1]; x00 += r[1];
   r[1] = uint64_t(x00);
   uint64_t c = uint64_t(x00>>64);
 
-  for (int kh = 1; kh < N-1; ++kh) {
+  const int N3 = Nr < N-1 ? Nr : N-1;
+  for (int kh = 1; kh < N3; ++kh) {
     uintx_t x = uintx_t(a[kh])*a[kh];
     uint64_t nd0 = r[kh*2+0],  nd1 = r[kh*2+1];
     x += nd0; x += nd0;
@@ -60,10 +70,12 @@ void sqrx(uint64_t* r, const uint64_t* a)
     c  = uint64_t(sum1 >> 64);
   }
 
-  uintx_t xhh = uintx_t(a[N-1])*a[N-1] + c;
-  xhh += r[N*2-2]; xhh += r[N*2-2];
-  r[N*2-2] = uint64_t(xhh);
-  r[N*2-1] = uint64_t(xhh >> 64);
+  if (N-1 < Nr) {
+    uintx_t xhh = uintx_t(a[N-1])*a[N-1] + c;
+    xhh += r[N*2-2]; xhh += r[N*2-2];
+    r[N*2-2] = uint64_t(xhh);
+    r[N*2-1] = uint64_t(xhh >> 64);
+  }
 }
 
 void sqrx(uint64_t* r, uint64_t a)
@@ -223,7 +235,7 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
   invS[7] = invSx1;
   sqrx(invS_sqr, invSx1);
   mulh<2, 2, 2, 4>(prod3, invS_sqr, &src[5]);
-  if (exp1) 
+  if (exp1)
     mul2<2>(prod3);
   prod3[1] ^= uint64_t(1) << 63;
   uint64_t s = prod3[1] & (uint64_t(1) << 63) ? uint64_t(-1) : 0;
@@ -239,7 +251,7 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
   xorx<3>(prod3, s);
   mulh<3, 2, 2, 5>(prod4, prod3, &invS[6]);
   xorx<3>(prod4, ~s);
-  if (exp1) 
+  if (exp1)
     mul2<3>(prod4);
   addx<2>(&invS[4], prod4, ~s);
 
@@ -250,7 +262,7 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
   xorx<5>(prod3, s);
   mulh<5, 4, 4, 9>(prod4, prod3, &invS[4]);
   xorx<5>(prod4, ~s);
-  if (exp1) 
+  if (exp1)
     mul2<5>(prod4);
   addx<4>(&invS[0], prod4, ~s);
 
@@ -267,7 +279,7 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
     uint64_t* TP_sqr = &tmpbuf[8*0];
     TP[0] = UINT64_MID;
     // TP[7:0]  - Tip point TP = (res+0.5) scaled by 2**511
-    sqrx<8>(TP_sqr, TP);  // TP_sqr scaled by 2**1022
+    sqrx<8, 5>(TP_sqr, TP);  // TP_sqr scaled by 2**1022
     lsw = TP_sqr[8] << 1;
   }
   // rounding
