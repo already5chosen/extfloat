@@ -136,10 +136,6 @@ void addw(uint64_t* __restrict dst, const uint64_t* src, uint64_t w)
   }
 }
 
-static __inline uint64_t mulhx2(const uint64_t a, uint64_t b) {
-  return uint64_t((uintx_t(a)*b) >> 63);
-}
-
 template<int Na, int Nb, int K, int resEnd>
 uint64_t mulh_pass(uint64_t * __restrict r, const uint64_t* a, const uint64_t* b, uint64_t carryH)
 {
