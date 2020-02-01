@@ -221,7 +221,8 @@ static uint64_t rsqrt64(uint64_t x, int e)
     // 2nd NR step
     y = ((mulh((uint64_t(3)<<62)-(mulh(uint64_t(y)*y, x)>>1), uint64_t(y)<<32) >> 30)+1) >> 1;
     // 3rd NR step
-    y64 = mulhx2((uint64_t(3)<<62)-(mulh(uint64_t(y)*y, x)>>1), uint64_t(y)<<32);
+    uintx_t pr3 = (uintx_t(3)<<95) - ((uintx_t(uint64_t(y)*y) * x) >> 32);
+    y64 = uint64_t((pr3 >> 64)*y) + mulh(uint64_t(pr3),y);
   }
   // handle exponent
   static const uint64_t exp_adj_tab[2] = { 0, 0x95f619980c4336f7ull };
