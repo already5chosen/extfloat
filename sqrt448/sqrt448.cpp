@@ -90,11 +90,20 @@ static uint64_t mulh(const uint64_t a, uint64_t b) {
 }
 
 template<int N>
-void mul2(uint64_t* __restrict buf)
+void lshift1(uint64_t* __restrict buf)
 {
   for (int i = N-1; i > 0; --i)
     buf[i] = (buf[i] << 1) | (buf[i-1] >> 63) ;
   buf[0] = buf[0] << 1;
+}
+
+template<int N>
+void lshift_0or1(uint64_t* __restrict buf, int sh)
+{
+  sh &= 1;
+  for (int i = N-1; i > 0; --i)
+    buf[i] = (buf[i] << sh) | ((buf[i-1] >> 63) & sh) ;
+  buf[0] = buf[0] << sh;
 }
 
 template<int N>
@@ -235,8 +244,7 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
   invS[7] = invSx1;
   sqrx(invS_sqr, invSx1);
   mulh<2, 2, 2, 4>(prod3, invS_sqr, &src[5]);
-  if (exp1)
-    mul2<2>(prod3);
+  lshift_0or1<2>(prod3, exp1);
   prod3[1] ^= uint64_t(1) << 63;
   uint64_t s = prod3[1] & (uint64_t(1) << 63) ? uint64_t(-1) : 0;
   xorx<2>(prod3, s);
@@ -251,25 +259,24 @@ void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
   xorx<3>(prod3, s);
   mulh<3, 2, 2, 5>(prod4, prod3, &invS[6]);
   xorx<3>(prod4, ~s);
-  if (exp1)
-    mul2<3>(prod4);
+  lshift_0or1<3>(prod4, exp1);
   addx<2>(&invS[4], prod4, ~s);
 
   // improve precision to 511-eps bits
   sqrx<4>(invS_sqr, &invS[4]);
   mulh<8, 7, 7, 12>(prod3, invS_sqr, &src[0]);
+  lshift_0or1<5>(prod3, exp1);
   s = prod3[4] & (uint64_t(1) << 63) ? uint64_t(-1) : 0;
   xorx<5>(prod3, s);
   mulh<5, 4, 4, 9>(prod4, prod3, &invS[4]);
   xorx<5>(prod4, ~s);
-  if (exp1)
-    mul2<5>(prod4);
   addx<4>(&invS[0], prod4, ~s);
 
   // Calculate sqrt() as src*invSqrt
   mulh<8, 7, 7, 15>(prod3, invS, &src[0]); // scaled by 2**510 or 2**511
   if (exp1)
-    mul2<8>(prod3); // scaled by 2**511
+    lshift1<8>(prod3); // scaled by 2**511
+  // lshift_0or1<8>(prod3, exp1); // scaled by 2**511
   uint64_t lsw = prod3[0];
   const uint64_t UINT64_MID = uint64_t(1) << 63;
   const uint64_t MAX_ERR    = 1 << 20; // probably less, but it does not cost much to be on the safe side
