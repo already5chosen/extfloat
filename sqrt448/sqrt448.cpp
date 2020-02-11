@@ -90,20 +90,21 @@ static uint64_t mulh(const uint64_t a, uint64_t b) {
 }
 
 template<int N>
-void lshift1(uint64_t* __restrict buf)
-{
-  for (int i = N-1; i > 0; --i)
-    buf[i] = (buf[i] << 1) | (buf[i-1] >> 63) ;
-  buf[0] = buf[0] << 1;
-}
-
-template<int N>
 void lshift_0or1(uint64_t* __restrict buf, int sh)
 {
   sh &= 1;
   for (int i = N-1; i > 0; --i)
     buf[i] = (buf[i] << sh) | ((buf[i-1] >> 63) & sh) ;
   buf[0] = buf[0] << sh;
+}
+
+template<int N>
+void rshift_0or1(uint64_t* __restrict buf, int sh)
+{
+  sh &= 1;
+  for (int i = 0; i < N-1; ++i)
+    buf[i] = (buf[i] >> sh) | ((buf[i+1] & sh) << 63);
+  buf[N-1] = buf[N-1] >> sh;
 }
 
 template<int N>
@@ -191,6 +192,17 @@ void mulh(uint64_t * __restrict r, const uint64_t* a, const uint64_t* b)
   }
 }
 
+template<int N>
+void subx(uint64_t* __restrict buf, const uint64_t* x)
+{
+  uintx_t diff = uintx_t(buf[0]) - x[0];
+  buf[0] = uint64_t(diff);
+  for (int i = 1; i < N; ++i) {
+    diff = (uintx_t(buf[i]) - x[i]) - (uint64_t(diff >> 64) & 1);
+    buf[i] = uint64_t(diff);
+  }
+}
+
 // rsqrt64 - calculate round(ldexp(1/sqrt(ldexp(quad_t(u), e-63)), 64))
 // x - input in range [2**63:2**64-1]
 // e - exponent in range [0:1]
@@ -236,58 +248,62 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
   uint64_t* invS_sqr = &tmpbuf[8*1];
   uint64_t* prod3    = &tmpbuf[8*2];
   uint64_t* prod4    = invS_sqr;
+  uint64_t* Sqrt     = &tmpbuf[8*0];
+  uint64_t* Sqrt_sqr = &tmpbuf[8*1];
+  uint64_t* Sqrt_adj = &tmpbuf[8*2];
 
   // improve precision to 127-eps bits
-  invS[7] = invSx1;
+  invS[3] = invSx1;
   sqrx(invS_sqr, invSx1);
   mulh<2, 2, 2, 4>(prod3, invS_sqr, &src[5]);
   lshift_0or1<2>(prod3, exp1);
   prod3[1] ^= uint64_t(1) << 63;
   uint64_t s = prod3[1] & (uint64_t(1) << 63) ? uint64_t(-1) : 0;
   xorx<2>(prod3, s);
-  mulh<2, 1, 1, 3>(prod4, prod3, &invS[7]);
+  mulh<2, 1, 1, 3>(prod4, prod3, &invS[3]);
   xorx<2>(prod4, ~s);
-  addx<1>(&invS[6], prod4, ~s);
+  addx<1>(&invS[2], prod4, ~s);
 
   // improve precision to 255-eps bits
-  sqrx<2>(invS_sqr, &invS[6]);
+  sqrx<2>(invS_sqr, &invS[2]);
   mulh<4, 4, 4, 7>(prod3, invS_sqr, &src[3]);
   s = prod3[2] & (uint64_t(1) << 63) ? uint64_t(-1) : 0;
   xorx<3>(prod3, s);
-  mulh<3, 2, 2, 5>(prod4, prod3, &invS[6]);
+  mulh<3, 2, 2, 5>(prod4, prod3, &invS[2]);
   xorx<3>(prod4, ~s);
   lshift_0or1<3>(prod4, exp1);
-  addx<2>(&invS[4], prod4, ~s);
+  addx<2>(&invS[0], prod4, ~s);
 
-  // improve precision to 511-eps bits
-  sqrx<4>(invS_sqr, &invS[4]);
-  mulh<8, 7, 7, 12>(prod3, invS_sqr, &src[0]);
-  lshift_0or1<5>(prod3, exp1);
-  s = prod3[4] & (uint64_t(1) << 63) ? uint64_t(-1) : 0;
-  xorx<5>(prod3, s);
-  mulh<5, 4, 4, 9>(prod4, prod3, &invS[4]);
-  xorx<5>(prod4, ~s);
-  addx<4>(&invS[0], prod4, ~s);
+  // Calculate sqrt() as src*invSqrt, precision: 255-eps bits
+  mulh<4, 4, 4, 8>(&Sqrt[4], &invS[0], &src[3]); // scaled by 2**254 or 2**255
+  lshift_0or1<4>(&Sqrt[4], exp1);                // scaled by 2**255
 
-  // Calculate sqrt() as src*invSqrt
-  mulh<8, 7, 7, 15>(prod3, invS, &src[0]); // scaled by 2**510 or 2**511
-  if (exp1)
-    lshift1<8>(prod3); // scaled by 2**511
-  // lshift_0or1<8>(prod3, exp1); // scaled by 2**511
-  uint64_t lsw = prod3[0];
+  // improve precision to 511-eps bits by Newton step
+  sqrx<4, 3>(Sqrt_sqr, &Sqrt[4]);
+  lshift_0or1<5>(Sqrt_sqr, exp1 ^ 1); // sqr(sqrt(src)) scaled by 2**511
+  subx<4>(&Sqrt_sqr[1], src);         // Sqrt_sqr = err = Sqrt**2 - src
+  s = Sqrt_sqr[4] & (uint64_t(1) << 63) ? uint64_t(-1) : 0; // s = sign(err)
+  xorx<5>(Sqrt_sqr, s);               // Sqrt_sqr = abs(err)
+  mulh<5, 4, 4, 9>(Sqrt_adj, Sqrt_sqr, &invS[0]); // Sqrt_adj = abs(err)*invS/2
+  rshift_0or1<5>(Sqrt_adj, exp1 ^ 1); // proper scaling
+  xorx<5>(Sqrt_adj, ~s);              // Sqrt_adj = -err*invS/2
+  addx<4>(Sqrt, Sqrt_adj, ~s);        // Sqrt -= err*invS/2
+  // Sqrt scaled by 2**511
+
+  uint64_t lsw = Sqrt[0];
   const uint64_t UINT64_MID = uint64_t(1) << 63;
   const uint64_t MAX_ERR    = 1 << 20; // probably less, but it does not cost much to be on the safe side
   if (lsw - (UINT64_MID-MAX_ERR) < MAX_ERR*2) {
     // We are very close to tip point
-    uint64_t* TP     = prod3;
-    uint64_t* TP_sqr = &tmpbuf[8*0];
+    uint64_t* TP     = Sqrt;
+    uint64_t* TP_sqr = Sqrt_sqr;
     TP[0] = UINT64_MID;
     // TP[7:0]  - Tip point TP = (res+0.5) scaled by 2**511
     sqrx<8, 5>(TP_sqr, TP);  // TP_sqr scaled by 2**1022
     lsw = TP_sqr[8] << 1;
   }
   // rounding
-  addw<7>(dst, &prod3[1], lsw >> 63);
+  addw<7>(dst, &Sqrt[1], lsw >> 63);
 }
 
 cpp_bin_float_132 my_sqrt(const cpp_bin_float_132& x) {
