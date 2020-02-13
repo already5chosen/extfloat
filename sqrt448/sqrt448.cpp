@@ -6,6 +6,7 @@
 typedef unsigned __int128 uintx_t;
 
 template<int N, int Nr = N>
+static
 void sqrx(
   uint64_t* r,       // [Nr*2]
   const uint64_t* a  // [N]
@@ -78,6 +79,7 @@ void sqrx(
   }
 }
 
+static
 void sqrx(uint64_t* r, uint64_t a)
 {
   uintx_t x = uintx_t(a)*a;
@@ -90,6 +92,7 @@ static uint64_t mulh(const uint64_t a, uint64_t b) {
 }
 
 template<int N>
+static
 void lshift_0or1(uint64_t* __restrict buf, int sh)
 {
   sh &= 1;
@@ -99,6 +102,7 @@ void lshift_0or1(uint64_t* __restrict buf, int sh)
 }
 
 template<int N>
+static
 void rshift_0or1(uint64_t* __restrict buf, int sh)
 {
   sh &= 1;
@@ -108,6 +112,7 @@ void rshift_0or1(uint64_t* __restrict buf, int sh)
 }
 
 template<int N>
+static
 void xorx(uint64_t* __restrict buf, uint64_t w)
 {
   for (int i = 0; i < N; ++i)
@@ -115,6 +120,7 @@ void xorx(uint64_t* __restrict buf, uint64_t w)
 }
 
 template<int N>
+static
 void addx(uint64_t* __restrict acc, const uint64_t* x, uint64_t msw)
 {
   memcpy(acc, x, sizeof(uint64_t)*N);
@@ -127,6 +133,7 @@ void addx(uint64_t* __restrict acc, const uint64_t* x, uint64_t msw)
 }
 
 template<int N>
+static
 void addw(uint64_t* __restrict dst, const uint64_t* src, uint64_t w)
 {
   uintx_t sum = (uintx_t)src[0] + w;
@@ -138,6 +145,7 @@ void addw(uint64_t* __restrict dst, const uint64_t* src, uint64_t w)
 }
 
 template<int Na, int Nb, int K, int resEnd>
+static
 uint64_t mulh_pass(uint64_t * __restrict r, const uint64_t* a, const uint64_t* b, uint64_t carryH)
 {
   typedef unsigned __int128 uintx_t;
@@ -167,6 +175,7 @@ uint64_t mulh_pass<0, 0, 0, 0>(uint64_t * __restrict r, const uint64_t* a, const
 }
 
 template<int Na, int Nb, int resBeg, int resEnd>
+static
 void mulh(uint64_t * __restrict r, const uint64_t* a, const uint64_t* b)
 {
   typedef unsigned __int128 uintx_t;
@@ -193,6 +202,7 @@ void mulh(uint64_t * __restrict r, const uint64_t* a, const uint64_t* b)
 }
 
 template<int N>
+static
 void subx(uint64_t* __restrict buf, const uint64_t* x)
 {
   uintx_t diff = uintx_t(buf[0]) - x[0];
