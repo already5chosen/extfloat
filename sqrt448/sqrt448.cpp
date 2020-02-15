@@ -87,6 +87,27 @@ void sqrx(uint64_t* r, uint64_t a)
   r[1] = uint64_t(x>>64);
 }
 
+// Calculate y=sqr(x), where x= a*2**64 + 2**63, return y[8]
+// The function is called rarely, so optimized for size, with little regard to speed
+static
+uint64_t sqr_tip_point(const uint64_t a[7])
+{
+  uintx_t acc = a[0];
+  for (int K = 1; K < 7; ++K) {
+    uintx_t accx = a[K];
+    for (int i = 0, j = K-1; j >= 0; ++i, --j) {
+      uintx_t x = uintx_t(a[i])*a[j];
+      acc  += uint64_t(x);
+      accx += uint64_t(x>>64);
+    }
+    acc = accx + uint64_t(acc>>64);
+  }
+  uint64_t r8 = uint64_t(acc);
+  for (int i = 0, j = 6; j >= 0; ++i, --j)
+    r8 += a[i]*a[j];
+  return r8;
+}
+
 static uint64_t mulh(const uint64_t a, uint64_t b) {
   return uint64_t((uintx_t(a)*b) >> 64);
 }
@@ -305,12 +326,8 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
   const uint64_t MAX_ERR    = 1 << 20; // probably less, but it does not cost much to be on the safe side
   if (lsw - (UINT64_MID-MAX_ERR) < MAX_ERR*2) {
     // We are very close to tip point
-    uint64_t* TP     = Sqrt;
-    uint64_t* TP_sqr = Sqrt_sqr;
-    TP[0] = UINT64_MID;
-    // TP[7:0]  - Tip point TP = (res+0.5) scaled by 2**511
-    sqrx<8, 5>(TP_sqr, TP);  // TP_sqr scaled by 2**1022
-    lsw = TP_sqr[8] << 1;
+    // square (res*2**64+2**63), take sqr[8]
+    lsw = sqr_tip_point(&Sqrt[1]) << 1;
   }
   // rounding
   addw<7>(dst, &Sqrt[1], lsw >> 63);
