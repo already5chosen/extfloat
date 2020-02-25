@@ -112,6 +112,10 @@ static uint64_t mulh(const uint64_t a, uint64_t b) {
   return uint64_t((uintx_t(a)*b) >> 64);
 }
 
+static uint64_t imulh(const int64_t a, int64_t b) {
+  return int64_t((__int128(a)*b) >> 64);
+}
+
 template<int N>
 static
 void lshift_0or1(uint64_t* __restrict buf, int sh)
@@ -237,37 +241,42 @@ void subx(uint64_t* __restrict buf, const uint64_t* x)
 // rsqrt64 - calculate round(ldexp(1/sqrt(ldexp(quad_t(u), e-63)), 64))
 // x - input in range [2**63:2**64-1]
 // e - exponent in range [0:1]
-// result is calculated with precision slightly better than +/-2
+// result is calculated with precision better than +/-2
 // rsqrt64(2**63,0) => 2**64-1
 static uint64_t rsqrt64(uint64_t x, int e)
 {
-  uint64_t y64 = uint64_t(-1);
-  if ((x << 1) > 2) {
-    static const uint8_t rsqrt_tab[17] = {
-    255,  240,  226,  213,  201,  190,  180,  170,
-    161,  153,  145,  137,  130,  123,  117,  111,
-    105};
-    int idx = (x >> 59) & 15;
-    uint32_t t0 = rsqrt_tab[idx];
-    uint32_t t1 = rsqrt_tab[idx+1];
-    // interpolate
-    uint32_t fr7 = (x >> (59-7)) & 127;
-    uint32_t dt = (t0-t1)*fr7;
-    uint32_t y = ((t0+257)<<7)-1-dt;
-    // 1st NR step
-    uint32_t yyx = ((y*y)*(x >> 32)) >> 33;
-    y = (uint64_t(y) * ((3u << 30)-yyx)) >> 15;
-    // 2nd NR step
-    y = ((mulh((uint64_t(3)<<62)-(mulh(uint64_t(y)*y, x)>>1), uint64_t(y)<<32) >> 30)+1) >> 1;
-    // 3rd NR step
-    uintx_t pr3 = (uintx_t(3)<<95) - ((uintx_t(uint64_t(y)*y) * x) >> 32);
-    y64 = uint64_t((pr3 >> 64)*y) + mulh(uint64_t(pr3),y);
-  }
-  // handle exponent
-  static const uint64_t exp_adj_tab[2] = { 0, 0x95f619980c4336f7ull };
-  y64 -= (mulh(y64, exp_adj_tab[e]) + 1)>>1;
+  static const uint8_t rsqrt_tab[16] = {
+    252,  245,  238,  232,  226,  221,  216,  211,
+    207,  203,  199,  195,  192,  189,  185,  182,
+  };
+  int idx = (x >> 59) & 15;
+  uint64_t y = rsqrt_tab[idx];  // y scaled by 2^8
 
-  return y64;
+  // 1st NR step - y = y*(3+eps - y*y*x)/2
+  uint64_t yy  = y*y;                           // yy=y*y    scaled by 2^16
+  uint64_t yyx = yy*(x >> (64-15));             // yyx=y*y*x scaled by 2^(63+16+15-64)=2^30
+  y = (y * ((3u << 30)+(3u<<17)-yyx))>>(6+1);   // y         scaled by 2^(8+30-6)=2^32
+
+  // 2nd NR step
+  yy  = (y*y)>>32;                              // yy=y*y    scaled by 2^32
+  yyx = (yy*(x >> 32)) >> 33;                   // yyx=y*y*x scaled by 2^(32+63-32-33)=2^30
+  y   = (y * ((3u << 30)+(3u<<4)-yyx))>>(30+1); // y         scaled by 2^(32+30-30)=2^32
+
+  // handle exponent
+  static const uint32_t exp_adj_tabb[2] = { uint32_t(-1), 3037000500u }; // 0xb504f333f9de6484
+  y = (y * exp_adj_tabb[e]) >> 32;
+
+  // 3rd NR step
+  // Use 2nd order polynomial: y =  y - y*(err/2 - 3/8*err**2) = y - y/2*(err - 3/4*err**2)
+  x = x*2;                                               // x= x - 1      scaled by 2**64
+  yy = (y * y) << e;
+  int64_t err = int64_t(mulh(yy, x)+yy);                 // err = y*y*x-1 scaled by 2**64
+  uint64_t err2 = imulh(err, err);                       // err2 = err*err scaled by 2**64
+  int64_t m2 = err2*3 - err*4;                           // m2 = 3*err**2 - err*4
+  int64_t adj = imulh(m2, int64_t(uint64_t(y)<<29));     // adj = m2*(y/8)
+  uint64_t ret = (y<<32) + adj;
+
+  return ret;
 }
 
 static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)

@@ -8,6 +8,28 @@ static void find_tip_points(const cpp_bin_float_132& src, cpp_bin_float_132 dst[
 
 int main()
 {
+  for (int i=0; i < 10000;i++) {
+    for (int wi = 0; wi < 7; ++wi) {
+      cpp_bin_float_132 x(1);
+      reinterpret_cast<uint64_t*>(&x.backend().bits())[wi] += i;
+      for (int e = 0; e < 2; ++e) {
+        cpp_bin_float_132 res = my_sqrt(x);
+        cpp_bin_float_132 ref = sqrt(x);
+        if (ref != res) {
+          std::cout
+            << "i=" << i << ":" << wi << ":" << e << std::endl
+            << std::setprecision(150)
+            << "x=" << x << std::endl
+            << "res=" << res << std::endl
+            << "ref=" << ref << std::endl;
+          return 1;
+        }
+        x += x;
+      }
+    }
+  }
+  std::cout << "[0] o.k\n";
+
   for (int i=0; i < 100000;i++) {
     cpp_bin_float_132 x = i;
     cpp_bin_float_132 res = my_sqrt(x);

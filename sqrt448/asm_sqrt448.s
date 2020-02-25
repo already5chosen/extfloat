@@ -2,11 +2,11 @@
 	.p2align	4               # @_ZZL7rsqrt64yiE11exp_adj_tab
 _rsqrt64_tables:
   # rsqrt_exp_adj_tab
-	.quad	0
-	.quad	0x95f619980c4336f7
+	.long	-1
+	.long	3037000500
   # rsqrt_tab
-  .byte 255, 240,  226,  213,  201,  190,  180,  170
-  .byte 161, 153,  145,  137,  130,  123,  117,  111,  105
+  .byte 252, 245,  238,  232,  226,  221,  216,  211
+  .byte 207, 203,  199,  195,  192,  189,  185,  182
 	.addrsig
 
 	.text
@@ -126,70 +126,64 @@ asm_sqrt448:                            # @asm_sqrt448
 	.seh_endprologue
 
   movq  %rcx, 56(%rsp)      # save dst pointer
-	movq	48(%rdx), %r10      # r10 = src[6]
+	movq	48(%rdx), %rax      # r10 = x = src[6]
   mov   %rdx, %rsi          # rsi = src
-	leaq	(%r10,%r10), %rax
-	movq	$-1, %rcx
+	movq	%rax, %rbx          # rbx = x
+	movq	%rax, %r10          # r10 = x
 	leaq	_rsqrt64_tables(%rip), %rdi
-	cmpq	$3, %rax
-	jb	.LBB0_2
-# %bb.1:
-	movq	%r10, %rax
-	shrq	$59, %rax
-	andl	$15, %eax
-	movzbl	16(%rax,%rdi), %edx
-	movzbl	17(%rax,%rdi), %r11d
-	movq	%r10, %rcx
-	shrq	$52, %rcx
-	andl	$127, %ecx
-	movl	%edx, %eax
-	subl	%r11d, %eax
-	imull	%ecx, %eax
-	shll	$7, %edx
-	orl	$32895, %edx            # imm = 0x807F
-	subl	%eax, %edx
-	movl	%edx, %eax
-	imull	%eax, %eax
-	movq	%r10, %rcx
-	shrq	$32, %rcx
-	imulq	%rax, %rcx
-	shrq	$33, %rcx
-	movl	$3221225472, %r11d      # imm = 0xC0000000
-	subq	%rcx, %r11
-	imulq	%rdx, %r11
-	shrq	$15, %r11
-	movl	%r11d, %eax
-	imulq	%rax, %rax
-	mulq	%r10
-	shrq	%rdx
-	movabsq	$-4611686018427387904, %rax # imm = 0xC000000000000000
-	subq	%rdx, %rax
-	shlq	$32, %r11
-	mulq	%r11
-	shrq	$30, %rdx
-	addq	$1, %rdx
-	shrq	%rdx
-	movl	%edx, %ecx
-	movq	%rcx, %rax
-	imulq	%rcx, %rax
-	mulq	%r10
-	shrdq	$32, %rdx, %rax
-	shrq	$32, %rdx
-	negq	%rax
-	movabsq	$6442450944, %rbx       # imm = 0x180000000
-	sbbq	%rdx, %rbx
-	imulq	%rcx, %rbx
-	mulq	%rcx
-	movq	%rdx, %rcx
-	addq	%rbx, %rcx
-.LBB0_2:
-	movq	%rcx, %rax
-  mov   %rcx, %rbx
-  mov   %r8d, %ecx                # rcx = exp1
-	mulq	(%rdi,%rcx,8)
-	addq	$1, %rdx
-	shrq	%rdx
-	subq	%rdx, %rbx                # rbx = invSx1;
+	shr   $59, %rax
+	and   $15, %eax             # rax = idx = (x >> 59) & 15;
+	movzbl 8(%rax,%rdi), %eax   # rax = y = rsqrt_tab[idx]; y scaled by 2^8
+
+  # 1st NR step - y = y*(3+eps1 - y*y*x)/2
+  mov  %eax, %edx             # rdx = y
+  imul %eax, %eax             # rax = yy = y*y;    scaled by 2^16
+  shr  $49,  %rbx             # rbx = x >> (64-15)
+  imul %ebx, %eax             # rax = yyx = yy*(x >> (64-15)) = y*y*x scaled by 2^(63+16+15-64)=2^30
+  NR1_3 = ((3)<<30)+((3)<<17);
+  mov  $(NR1_3), %ebx
+  sub  %eax, %ebx
+  imul %rbx, %rdx
+  shr  $7,   %rdx             # rdx = y = (y * ((3u << 30)+(3u<<17)-yyx))>>(6+1); scaled by 2^(8+30-6)=2^32
+
+  # 2nd NR step - y = y*(3+eps2 - y*y*x)/2
+  mov  %rdx, %rax             # rax = y
+  imul %rdx, %rdx             # rdx = yy=y*y       scaled by 2^64
+  mov  %r10, %rbx
+  shr  $32,  %rdx             # rdx = yy=(y*y)>>32 scaled by 2^32
+  shr  $32,  %rbx             # rbx = x >> 32;     scaled by 2^31
+  imul %rbx, %rdx
+  shr  $33,  %rdx             # rdx = yyx = (yy*(x >> 32)) >> 33 = y*y*x scaled by 2^(32+63-32-33)=2^30
+  NR2_3 = ((3)<<30)+((3)<<4);
+  mov  $(NR2_3), %ebx
+  sub  %edx, %ebx             # rbx = (3u << 30)+(3u<<4)-yyx
+  imul %rbx, %rax             # rax = y * ((3u << 30)+(3u<<4)-yyx)
+  mov  %r8d, %ecx             # rcx = exp1
+  shr  $31,  %rax             # rax = y = (y * ((3u << 30)+(3u<<4)-yyx))>>(30+1); scaled by 2^(32+30-30)=2^32
+
+  # handle exponent
+  mull (%rdi,%rcx,4)          # rdx = y = (y * exp_adj_tabb[exp1]) >> 32
+
+  # 3rd NR step
+  # Use 2nd order polynomial: y =  y - y*(err/2 - 3/8*err**2) = y - y/2*(err - 3/4*err**2)
+  mov  %rdx, %rbp             # rbp = y
+  imul %rdx, %rdx             # rdx = y*y
+  lea  (%r10,%r10), %rax      # rax = x1 = x*2 = x - 1           scaled by 2**64
+  shl  %cl,  %rdx             # rdx = yy = (y * y) << exp1; scaled by 2**64
+  mov  %rdx, %rbx             # rbx = yy
+  mul  %rdx                   # rdx:rax = x1*yy
+  add  %rbx, %rdx             # rdx = err = int64_t(mulh(yy, x1)+yy) = y*y*x-1 scaled by 2**64
+  mov  %rdx, %rax             # rax = err
+  mov  %rdx, %rbx             # rbx = err
+  imul %rax                   # rdx = err2 = imulh(err, err) = err*err scaled by 2**64
+  lea  (%rdx,%rdx,2),%rax     # rax = err2*3
+  shl  $2,   %rbx             # rbx = err*4
+  sub  %rbx, %rax             # rax = m2 = err2*3 - err*4 = 3*err**2 - err*4 scaled by 2**64
+  mov  %rbp, %rbx             # rbx = y
+  shl  $29,  %rbp             # rbp = y << 29
+  imul %rbp                   # rdx = adj = imulh(m2, int64_t(y<<29)) = m2*(y/8)
+  shl  $32,  %rbx             # rbx = y << 32
+  add  %rdx, %rbx             # rbx = invSx1 = (y<<32) + adj;
 
   # Calculate sqrt() as src*invSqrt
   movq  %rbx, %rax                # rax = invSx1
