@@ -27,33 +27,24 @@ _rsqrt64_tables:
 .smul2:
 # signed multiply 128-bit number a, by 64-bit number b, return upper 128 bits of the product
 # inputs:
-# rdx:rax - a
-# rbx     - b
+# rdx:rax - a[1:0]
+# rbx     - b, b >= 2**63
 # outputs:
 # rdx:rax - result
 # rbx     - b (preserved)
 # other registers affected:
 # rdi, rbp
-  mov   %rdx, %rdi
-  sar   $63,  %rdx                # rdx = sign(err)
-  xor   %rdx, %rax
-  xor   %rdx, %rdi                # rdi:rax = abs(err)
-  mov   %rdx, %rbp                # rbp = sign(err)
-  # Sqrt_adj = abs(err)*invS/2, scaled by 2**(127-exp1)
-  mulq  %rbx                      # rdx:rax = invS[3]*abs_err[0]
-  mov   %rdi, %rax                # rax = abs_err[1]
-  mov   %rdx, %rdi                # rdi = mulh(invS[3],abs_err[0])
-  mulq  %rbx                      # rdx:rax = invS[3]*abs_err[1]
-  add   %rdi, %rax
-  adc   $0,   %rdx                # rdx:rax = invS[3]*abs_err[1] + mulh(invS[3],abs_err[0])
-  #  = abs(err)*invS/2, scaled by 2**(128-exp1)
-  not   %rbp
-  xor   %rbp, %rax
-  xor   %rbp, %rdx                # rdx:rax = -err*invS/2, scaled by 2**(128-exp1)
+  mov   %rdx, %rbp                # rbp     = a[1]
+  mul   %rbx                      # rdx:rax = a[0]*b
+  mov   %rdx, %rdi                # rdi     = (a[0]*b).HI
+  mov   %rbp, %rax                # rax     = a[1]
+  imul  %rbx                      # rdx:rax = a[1]*(b-2**64)
+  add   %rdi, %rax                # rdx:rax += (a[0]*b).HI
+  adc   %rbp, %rdx                # rdx:rax += a[1] + carry (emulate signed*unsigned multiplication)
   ret
 
 .smul4:
-# signed multiply 192-bit number a, by 128-bit number b, return upper 192 bits of the product
+# signed multiply 192-bit number a, by 128-bit number b, return upper 192 bits of the negated product
 # inputs:
 # rdx:rax:r8 - a
 # rbx:r14    - b
@@ -203,11 +194,12 @@ asm_sqrt448:                            # @asm_sqrt448
   sbb   %r10,     %rdx
   # rdx:rax = err = Sqrt**2 - src
   call  .smul2
-  # rdx:rax = -err*invS/2, scaled by 2**(128-exp1)
+  # rdx:rax = err*invS/2, scaled by 2**(128-exp1)
 	shrdq	%cl, %rdx, %rax
   sar   %cl, %rdx                 # rdx:rax = abs(err)*invS/2, scaled by 2**127
   # Sqrt -= err*invS/2
-  add   %rdx, %r12                # r12 = Sqrt[7]
+  neg   %rax                      # rax = Sqrt[6] = -adj[0]
+  sbb   %rdx, %r12                # r12 = Sqrt[7] -= adj[1] - borrow
   mov   %rax, %r13                # r13 = Sqrt[6]
 
   # adjust invS
@@ -222,9 +214,10 @@ asm_sqrt448:                            # @asm_sqrt448
 	shldq	$1, %rax, %rdx
   shl   $1, %rax                  # rdx:rax = rdx:rax << 1 = Rsqrt_err = sqrt*rsqrt, scaled by 2**128
   call  .smul2
-  # rdx:rax = -Rsqrt_err*invS, scaled by 2**127
+  # rdx:rax = adj = Rsqrt_err*invS, scaled by 2**127
   # invS -= Rsqrt_err*invS
-  add   %rdx, %rbx
+  neg %rax
+  sbb %rdx, %rbx
   jnz .no_ovf2
     movq $-1, %rbx
     movq %rbx,%rax
@@ -322,7 +315,7 @@ asm_sqrt448:                            # @asm_sqrt448
   # Rsqrt_err = sqrt*rsqrt-1, scaled by 2**256
   call  .smul4
   # rdx:rax:r8 = -Rsqrt_err*invS, scaled by 2**255
-  # invS -= Rsqrt_err*invS
+  # invS += -Rsqrt_err*invS
   add  %rdx, %r14
   adc  %rbp, %rbx
   jnz .no_ovf4
