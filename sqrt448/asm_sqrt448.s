@@ -24,76 +24,7 @@ _rsqrt64_tables:
 	.globl	asm_sqrt448             # -- Begin function asm_sqrt448
 
 	.p2align	4, 0x90
-.smul2:
-# signed multiply 128-bit number a, by 64-bit number b, return upper 128 bits of the product
-# inputs:
-# rdx:rax - a[1:0]
-# rbx     - b, b >= 2**63
-# outputs:
-# rdx:rax - result
-# rbx     - b (preserved)
-# other registers affected:
-# rdi, rbp
-  mov   %rdx, %rbp                # rbp     = a[1]
-  mul   %rbx                      # rdx:rax = a[0]*b
-  mov   %rdx, %rdi                # rdi     = (a[0]*b).HI
-  mov   %rbp, %rax                # rax     = a[1]
-  imul  %rbx                      # rdx:rax = a[1]*(b-2**64)
-  add   %rdi, %rax                # rdx:rax += (a[0]*b).HI
-  adc   %rbp, %rdx                # rdx:rax += a[1] + carry (emulate signed*unsigned multiplication)
-  ret
-
-.smul4:
-# signed multiply 192-bit number a, by 128-bit number b, return upper 192 bits of the negated product
-# inputs:
-# rdx:rax:r8 - a
-# rbx:r14    - b
-# outputs:
-# rdx:rax:r8 - result
-# rbx:r14    - b (preserved)
-# rbp        - ~sign(a)
-# other registers affected:
-# rdi, r10, r11
-  mov   %rdx, %rdi
-  sar   $63,  %rdx                # rdx = sign(a)
-  xor   %rdx, %rax
-  xor   %rdx, %rdi
-  xor   %rdx, %r8
-  # rdi:rax:r8 = abs(a)
-  mov   %rdx, %rbp                # rbp = sign(a)
-  mov   %rax, %r10                # r10 = abs_a[1]
-  mulq  %r14                      # rdx:rax = abs_a[1]*b[0]
-  mov   %r8,  %rax
-  mov   %rdx, %r8                 # r8 = prod[0] = (abs_a[1]*b[0]).HI
-  mulq  %rbx                      # rdx:rax = abs_a[0]*b[1]
-  xor   %r11d, %r11d
-  add   %rdx, %r8                 # r8  = prod[0] += (abs_a[1]*b[0]).HI
-  adc   %r11, %r11                # r11 = prod[1] = carry
-  mov   %r10, %rax                # rax = abs_a[1]
-  mulq  %rbx                      # rdx:rax = abs_a[1]*b[1]
-  xor   %r10d, %r10d
-  add   %rax, %r8                 # r8  = prod[0] += (abs_a[1]*b[1]).LO
-  adc   %rdx, %r11                # r11 = prod[1] += (abs_a[1]*b[1]).LO + carry
-  adc   %r10, %r10                # r10 = prod[2] = carry
-  mov   %rdi, %rax                # rax = abs_a[2]
-  mulq  %r14                      # rdx:rax = abs_a[2]*b[0]
-  add   %rax, %r8                 # r8  = prod[0] += (abs_a[2]*b[0]).LO
-  adc   %rdx, %r11                # r11 = prod[1] += (abs_a[2]*b[0]).LO + carry
-  adc   $0,   %r10                # r10 = prod[2] += carry
-  mov   %rdi, %rax                # rax = abs_a[2]
-  mulq  %rbx                      # rdx:rax = abs_a[2]*b[1]
-  add   %r11, %rax                # rax = prod[1] += (abs_a[2]*b[1]).LO
-  adc   %r10, %rdx                # rdx = prod[2] += (abs_a[2]*b[0]).HI + carry
-  # rdx:rax:r8 = abs(a)*b / 2**128
-  not   %rbp
-  xor   %rbp, %r8
-  xor   %rbp, %rax
-  xor   %rbp, %rdx
-  # rdx:rax:r8 = -a*b / 2**128
-  ret
-
-	.p2align	4, 0x90
-asm_sqrt448:                            # @asm_sqrt448
+asm_sqrt448:                      # @asm_sqrt448
 .seh_proc asm_sqrt448
 # %bb.0:
 	pushq	%r15
@@ -112,15 +43,21 @@ asm_sqrt448:                            # @asm_sqrt448
 	.seh_pushreg 5
 	pushq	%rbx
 	.seh_pushreg 3
-	subq	$96, %rsp
-	.seh_stackalloc 96
 	.seh_endprologue
 
-  movq  %rcx, 56(%rsp)      # save dst pointer
-	movq	48(%rdx), %rax      # r10 = x = src[6]
-  mov   %rdx, %rsi          # rsi = src
-	movq	%rax, %rbx          # rbx = x
-	movq	%rax, %r10          # r10 = x
+  # rcx = dst, rdx = src, r8d = exp1
+	movq	48(%rdx), %rax        # rax = src[6] = x
+	movq	  (%rdx), %rbx        # rbx = src[0]
+	movq	 8(%rdx), %rsi        # rsi = src[1]
+	movq	40(%rdx), %r13        # r13 = src[5]
+	movq	32(%rdx), %r12        # r12 = src[4]
+	movq	24(%rdx), %r11        # r11 = src[3]
+	movq	16(%rdx), %r10        # r10 = src[2]
+  movq  %rcx, 72(%rsp)        # save dst pointer at RCX home
+  movq  %rbx, 80(%rsp)        # save src[0] at RDX home
+  movq  %rsi, 88(%rsp)        # save src[1] at R8  home
+	movq	%rax, %rbx            # rbx = x
+	movq	%rax, %rsi            # rsi = x = src[6]
 	leaq	_rsqrt64_tables(%rip), %rdi
 	shr   $59, %rax
 	and   $15, %eax             # rax = idx = (x >> 59) & 15;
@@ -140,7 +77,7 @@ asm_sqrt448:                            # @asm_sqrt448
   # 2nd NR step - y = y*(3+eps2 - y*y*x)/2
   mov  %rdx, %rax             # rax = y
   imul %rdx, %rdx             # rdx = yy=y*y       scaled by 2^64
-  mov  %r10, %rbx
+  mov  %rsi, %rbx
   shr  $32,  %rdx             # rdx = yy=(y*y)>>32 scaled by 2^32
   shr  $32,  %rbx             # rbx = x >> 32;     scaled by 2^31
   imul %rbx, %rdx
@@ -159,7 +96,7 @@ asm_sqrt448:                            # @asm_sqrt448
   # Use 2nd order polynomial: y =  y - y*(err/2 - 3/8*err**2) = y - y/2*(err - 3/4*err**2)
   mov  %rdx, %rbp             # rbp = y
   imul %rdx, %rdx             # rdx = y*y
-  lea  (%r10,%r10), %rax      # rax = x1 = x*2 = x - 1           scaled by 2**64
+  lea  (%rsi,%rsi ),%rax      # rax = x1 = x*2 = x - 1           scaled by 2**64
   shl  %cl,  %rdx             # rdx = yy = (y * y) << exp1; scaled by 2**64
   mov  %rdx, %rbx             # rbx = yy
   mul  %rdx                   # rdx:rax = x1*yy
@@ -174,399 +111,297 @@ asm_sqrt448:                            # @asm_sqrt448
   shl  $29,  %rbp             # rbp = y << 29
   imul %rbp                   # rdx = adj = imulh(m2, int64_t(y<<29)) = m2*(y/8)
   shl  $32,  %rbx             # rbx = y << 32
-  add  %rdx, %rbx             # rbx = invSx1 = (y<<32) + adj;
+  add  %rdx, %rbx             # rbx = Rsqrt[1] = (y<<32) + adj;
 
   # Calculate sqrt() as src*invSqrt
-  movq  %rbx, %rax                # rax = invSx1
-  mulq  %r10                      # rdx = mulh(invSx1, src[6])
-  shl   %cl,  %rdx                # rdx = mulh(invSx1, src[6]) << expl
-  add   %rcx, %rdx                # rdx = (mulh(invSx1, src[6]) << expl) + expl
-  xor   $1,   %ecx                # ecx = exp1^1
-  movq  %rdx, %r12                # r12 = Sqrt[7]
-
-  # improve precision to 127-eps bits
-  mov   %rdx, %rax
-  mulq  %rdx                      # rdx:rax = sqr(sqrt(src)) scaled by 2**126
-	shldq	%cl, %rax, %rdx
-  shl   %cl, %rax                 # rdx:rax = rdx:rax << (exp1^1) = sqr(sqrt(src)) scaled by 2**(127-exp1)
-  # Sqrt_sqr = err = Sqrt**2 - src
-  sub   40(%rsi), %rax
-  sbb   %r10,     %rdx
-  # rdx:rax = err = Sqrt**2 - src
-  call  .smul2
-  # rdx:rax = err*invS/2, scaled by 2**(128-exp1)
-	shrdq	%cl, %rdx, %rax
-  sar   %cl, %rdx                 # rdx:rax = abs(err)*invS/2, scaled by 2**127
-  # Sqrt -= err*invS/2
-  neg   %rax                      # rax = Sqrt[6] = -adj[0]
-  sbb   %rdx, %r12                # r12 = Sqrt[7] -= adj[1] - borrow
-  mov   %rax, %r13                # r13 = Sqrt[6]
-
-  # adjust invS
-  # Rsqrt_err = sqrt*rsqrt, scaled by 2**127
-  mulq  %rbx                      # rdx:rax = invS[3]*Sqrt[6]
-  mov   %r12, %rax                # rax = Sqrt[7]
-  mov   %rdx, %rdi                # rdi = mulh(invS[3],Sqrt[6])
-  mulq  %rbx                      # rdx:rax = invS[3]*Sqrt[7]
-  add   %rdi, %rax
-  adc   $0,   %rdx                # rdx:rax = invS[3]*Sqrt[7] + mulh(invS[3],Sqrt[6])
-  # rdx:rax = Rsqrt_err = sqrt*rsqrt, scaled by 2**127
-	shldq	$1, %rax, %rdx
-  shl   $1, %rax                  # rdx:rax = rdx:rax << 1 = Rsqrt_err = sqrt*rsqrt, scaled by 2**128
-  call  .smul2
-  # rdx:rax = adj = Rsqrt_err*invS, scaled by 2**127
-  # invS -= Rsqrt_err*invS
-  neg %rax
-  sbb %rdx, %rbx
-  jnz .no_ovf2
-    movq $-1, %rbx
-    movq %rbx,%rax
-  .no_ovf2:
-  mov   %rax, %r14                # r14 = invS[2]
+  movq  %rbx, %rax            # rax = Rsqrt[1]
+  mulq  %rsi                  # rdx = mulh(Rsqrt[1], src[6])
+  shl   %cl,  %rdx            # rdx = mulh(Rsqrt[1], src[6]) << expl
+  inc   %rdx                  # rdx = (mulh(Rsqrt[1], src[6]) << expl) + 1
+  xor   $1,   %ecx            # ecx = exp0 = exp1^1
+  movq  %rdx, %r15            # r15 = Sqrt[7]
 
   # Registers usage
-  # rax - free (copy of invS[2])
-  # rdx - free
-  # rcx - (exp1^1)
-  # rbx - invS[3]
-  # rsi - src
+  # rax - free
+  # rdx - free (copy of Sqrt[7])
+  # rcx - exp0 = exp1^1
+  # rbx - Rsqrt[1]
+  # rsi - src[6]
   # rdi - free
   # rbp - free
   # r8  - free
   # r9  - free
-  # r10 - free (copy of src[6])
-  # r11 - free
-  # r12 - Sqrt[7]
-  # r13 - Sqrt[6]
-  # r14 - invS[2]
-  # r15 - free
+  # r10 - src[2]
+  # r11 - src[3]
+  # r12 - src[4]
+  # r13 - src[5]
+  # r14 - free
+  # r15 - Sqrt[7]
 
-  # improve precision to 255-eps bits
-  # Sqrt_sqr = sqr(sqrt(src)) scaled by 2**254
-  mov  %r13, %rax                  # rax = Sqrt[6]
-  mulq %rax                        # rdx:rax = Sqrt[6]*Sqrt[6]
-  mov  %rax, %r8                   # r8  = Sqrt_sqr[0]
-  mov  %rdx, %r10                  # r10 = Sqrt_sqr[1]
-  mov  %r13, %rax                  # rax = Sqrt[6]
-  mulq %r12                        # rdx:rax = Sqrt[6]*Sqrt[7]
-  add  %rax, %rax
-  adc  %rdx, %rdx                  # rdx:rax = Sqrt[6]*Sqrt[7]*2
-  mov  %r12, %r11
-  imul %r11, %r11                  # r11 = Sqrt[7]*Sqrt[7]
-  add  %r10, %rax                  # rax = Sqrt_sqr[1]
-  adc  %r11, %rdx                  # rdx = Sqrt_sqr[2]
-  # rdx:rax:r8 = sqr(sqrt(src))[2:0] scaled by 2**254
+  # improve precision of Sqrt to 64*2-eps bits
+  mov   %rdx, %rax            # rax = Sqrt[7]
+  mulq  %rax                  # rdx:rax = sqr(Sqrt[7]) scaled by 2**126
 	shldq	%cl, %rax, %rdx
-	shldq	%cl, %r8 , %rax
-  shl   %cl, %r8
-  # rdx:rax:r8 = sqr(sqrt(src))[2:0] scaled by 2**(255-exp1)
-  sub   24(%rsi),%r8               # Sqrt_sqr[0] -= src[3]
-  sbb   32(%rsi),%rax              # Sqrt_sqr[1] -= src[4]
-  sbb   40(%rsi),%rdx              # Sqrt_sqr[2] -= src[5]
-  call  .smul4
-  # rdx:rax:r8 = Sqrt_adj = -err*invS/2, scaled by 2**(255-exp1)
-	shrdq	%cl, %rax, %r8
+  shl   %cl, %rax             # rdx:rax = rdx:rax << (1-exp1) = sqr(sqrt(Sqrt[7])) scaled by 2**(127-exp1)
+  # Sqrt_sqr = err = Sqrt**2 - src
+  sub   %r13, %rax
+  sbb   %rsi, %rdx
+  # rdx:rax = err = Sqrt**2 - src
+  call  .smul2
+  # rdx:rax = err*invS/2, scaled by 2**(128-exp1)
 	shrdq	%cl, %rdx, %rax
-  sar   %cl, %rdx
-  # rdx:rax:r8 = Sqrt_adj = -err*invS/2, scaled by 2**255
-  # Sqrt += Sqrt_adj
-  add  %rdx, %r13
-  adc  %rbp, %r12
-  movq %r8,  %r9                   # r9 = Sqrt[4]
+  sar   %cl, %rdx             # rdx:rax = abs(err)*Rsqrt[1]/2, scaled by 2**127
+  # Sqrt -= err*invS/2
+  neg   %rax                  # rax = Sqrt[6] = -adj[0]
+  sbb   %rdx, %r15            # r15 = Sqrt[7] -= adj[1] - borrow
+  mov   %rax, %r14            # r14 = Sqrt[6]
 
-  # adjust invS
-
-  # Rsqrt_err = sqrt*rsqrt, scaled by 2**255
-  # Multiply a=Sqrt[7:4] (4 qwords) by b=invS[3:2] (2 qwords),
-  # Rsqrt_err[2:0] = words[4:2] of the product
-  mov  %rax, %r15                  # r15 = Sqrt[5]
-  mulq %r14                        # rdx:rax = a[1]*b[0]
-  mov  %r8,  %rax                  # rax = a[0]==Sqrt[4]
-  mov  %rdx, %r8                   # r8  = prod2 = (a[1]*b[0]).HI
-  mulq %rbx                        # rdx:rax = a[0]*b[1]
-  xor  %edi, %edi                  # rdi = prod3 = 0
-  add  %rdx, %r8                   # r8  = prod2+= (a[1]*b[0]).HI
-  adc  %rdi, %rdi                  # rdi = prod3+= carry
-  mov  %r15, %rax                  # rax = a[1]==Sqrt[5]
-  mulq %rbx                        # rdx:rax = a[1]*b[1]
-  add  %rax, %r8                   # r8  = prod2+= (a[1]*b[1]).LO
-  adc  %rdx, %rdi                  # rdi = prod3+= (a[1]*b[1]).HI + carry. Here carry out can't happen
-  mov  %r13, %rax                  # rax = a[2]==Sqrt[6]
-  mulq %r14                        # rdx:rax = a[2]*b[0]
-  xor  %ebp, %ebp                  # rbp = prod4 = 0
-  add  %rax, %r8                   # r8  = prod2+= (a[1]*b[1]).LO
-  adc  %rdx, %rdi                  # rdi = prod3+= (a[1]*b[1]).HI + carry.
-  adc  %rbp, %rbp                  # rbp = prod4+= carry
-  mov  %r13, %rax                  # rax = a[2]==Sqrt[6]
-  mulq %rbx                        # rdx:rax = a[2]*b[1]
-  add  %rax, %rdi                  # rdi = prod3+= (a[2]*b[1]).LO
-  adc  %rdx, %rbp                  # rbp = prod4+= (a[2]*b[1]).HI + carry.
-  mov  %r12, %rax                  # rax = a[3]==Sqrt[7]
-  mulq %r14                        # rdx:rax = a[3]*b[0]
-  add  %rdi, %rax                  # rax = prod3+= (a[3]*b[0]).LO
-  adc  %rdx, %rbp                  # rbp = prod4+= (a[3]*b[0]).HI + carry.
-  mov  %r12, %rdx                  # rdx = a[3]==Sqrt[7]
-  imul %rbx, %rdx                  # rdx = (a[3]*b[1]).LO
-  add  %rbp, %rdx                  # rdx = prod4+= (a[3]*b[1]).LO
-  # rdx:rax:r8 = Rsqrt_err = Rsqrt_err << 1
-	shldq	$1, %rax, %rdx
-	shldq	$1, %r8,  %rax
-  shl   $1, %r8
-  # Rsqrt_err = sqrt*rsqrt-1, scaled by 2**256
-  call  .smul4
-  # rdx:rax:r8 = -Rsqrt_err*invS, scaled by 2**255
-  # invS += -Rsqrt_err*invS
-  add  %rdx, %r14
-  adc  %rbp, %rbx
-  jnz .no_ovf4
-    # overflow in temporary result - set invS to maximum
-    movq $-1, %rbx
-    movq %rbx,%r14
-    movq %rbx,%r8
-    movq %rbx,%rax
-  .no_ovf4:
-  movq %r8,    (%rsp)              # wrkbuf[0]  = invS[0] = r8
-  movq %rax,  8(%rsp)              # wrkbuf[1]  = invS[1] = rax
-  movq %r14, 16(%rsp)              # wrkbuf[2]  = invS[2] = r14
-  movq %rbx, 24(%rsp)              # wrkbuf[3]  = invS[3] = rbx
-
-  # Registers usage
-  # rax - invS[1]
-  # rdx - free
-  # rcx - (exp1^1)
-  # rbx - invS[3]
-  # rsi - src
-  # rdi - free
-  # rbp - free
-  # r8  - invS[0]
-  # r9  - Sqrt[4]
-  # r10 - free
-  # r11 - free
-  # r12 - Sqrt[7]
-  # r13 - Sqrt[6]
-  # r14 - invS[2]
-  # r15 - Sqrt[5]
-
-  # improve precision of Sqrt to 511-eps bits
-  # Sqrt_sqr = sqr(Sqrt) scaled by 2**510
-  # Calculate 5 LS qwords of the product
-  mov %r9,  %rax                   # rax = a[0] = Sqrt[4]
-  mul %rax                         # rdx:rax = a[0]*a[0]
-  mov %rax, %r10                   # r10 = Sqrt_sqr[0] = (a[0]*a[0]).LO
-  mov %rdx, %rdi                   # rdi = Sqrt_sqr[1] = (a[0]*a[0]).HI
-
-  mov %r15, %rax                   # rax = a[1] = Sqrt[5]
-  mul %r9                          # rdx:rax = a[0]*a[1]
-  mov %rdx, %rbx                   # rbx = Sqrt_sqr[2] = (a[0]*a[1]).HI
-  add %rax, %rdi                   # rdi = Sqrt_sqr[1]+= (a[0]*a[1]).LO
-  adc $0,   %rbx                   # rbx = Sqrt_sqr[2]+= carry
-  xor %r11d, %r11d                 # r11 = Sqrt_sqr[3] = 0
-  add %rax, %rdi                   # rdi = Sqrt_sqr[1]+= (a[0]*a[1]).LO
-  adc %rdx, %rbx                   # rbx = Sqrt_sqr[2]+= (a[0]*a[1]).HI + carry
-  adc %r11, %r11                   # r11 = Sqrt_sqr[3]+= carry
-
-  mov %r13, %rax                   # rax = a[2] = Sqrt[6]
-  mul %r9                          # rdx:rax = a[0]*a[2]
-  xor %r8d, %r8d                   # r8  = Sqrt_sqr[4] = 0
-  add %rax, %rax
-  adc %rdx, %rdx
-  adc %r8,  %r8                    # r8:rdx:rax = a[0]*a[2]*2
-  add %rax, %rbx                   # rbx = Sqrt_sqr[2]+= (a[0]*a[2]*2).LO
-  adc %rdx, %r11                   # r11 = Sqrt_sqr[3]+= (a[0]*a[2]*2).HI + carry
-  adc $0,   %r8                    # r8  = Sqrt_sqr[4]+= carry
-  mov %r15, %rax                   # rax = a[1] = Sqrt[5]
-  mul %rax                         # rdx:rax = a[1]*a[1]
-  add %rax, %rbx                   # rbx = Sqrt_sqr[2]+= (a[1]*a[1]).LO
-  adc %rdx, %r11                   # r11 = Sqrt_sqr[3]+= (a[1]*a[1]).HI + carry
-  adc $0,   %r8                    # r8  = Sqrt_sqr[4]+= carry
-
-  mov %r12, %rax                   # rax = a[3] = Sqrt[7]
-  mul %r9                          # rdx:rax = a[0]*a[3]
-  mov %rax, %rbp                   # rbp = (a[0]*a[3]).LO
-  mov %rdx, %r14                   # r14 = (a[0]*a[3]).HI
-  mov %r13, %rax                   # rax = a[2] = Sqrt[6]
-  mul %r15                         # rdx:rax = a[1]*a[2]
-  add %rbp, %rax                   #
-  adc %r14, %rdx                   # rdx:rax = a[0]*a[3]+a[1]*a[2]
-  add %rax, %rax
-  adc %rdx, %rdx                   # rdx:rax = (a[0]*a[3]+a[1]*a[2])*2
-  add %rax, %r11                   # r11 = Sqrt_sqr[3]+= ((a[0]*a[3]+a[1]*a[2])*2).LO + carry
-  adc %rdx, %r8                    # r8  = Sqrt_sqr[4]+= ((a[0]*a[3]+a[1]*a[2])*2).HI + carry
-
-  mov %r12, %rax                   # rax = a[3] = Sqrt[7]
-  imul %r15,%rax                   # rax = (a[1]*a[3]).LO
-  add %rax, %rax                   # rax = (a[1]*a[3]*2).LO
-  add %rax, %r8                    # r8  = Sqrt_sqr[4]+= (a[1]*a[3]*2).LO
-  mov %r13, %rax                   # rax = a[2] = Sqrt[6]
-  imul %rax,%rax                   # rax = (a[2]*a[3])
-  add %rax, %r8                    # r8  = Sqrt_sqr[4]+= (a[2]*a[2]).LO
-  # r8:r11:rbx:rdi:r10 = Sqrt_sqr = sqr(Sqrt) scaled by 2**510
-
-  # Sqrt_sqr <<= (exp1 ^ 1)
-	shldq	%cl, %r11, %r8
-	shldq	%cl, %rbx, %r11
-	shldq	%cl, %rdi, %rbx
-	shldq	%cl, %r10, %rdi
-  shl   %cl, %r10
-  # r8:r11:rbx:rdi:r10 = Sqrt_sqr = sqr(Sqrt) scaled by 2**(511-exp1)
-
-  # Sqrt_sqr_err[4:1} <<= Sqrt_sqr[4:1] - src[3:0]
-  sub   (%rsi), %rdi
-  sbb  8(%rsi), %rbx
-  sbb 16(%rsi), %r11
-  sbb 24(%rsi), %r8
-
-  # at this point src[] is used no longer, so register rsi is free
-
-  mov %r8,  %rbp                   # rbp = Sqrt_sqr_err[4]
-  sar $63,  %r8                    # r8  = sign(Sqrt_sqr_err)
+  # improve precision of Rsqrt to 64*2-eps bits
+  # Multiply sqrt[7:6] by Rsqrt[1], take upper 128 bits of the product
+  mul   %rbx                  # rdx:rax = Rsqrt[1]*Sqrt[6]
+  mov   %r15, %rax            # rax     = Sqrt[7]
+  mov   %rdx, %rdi            # rdi     = mulh(invS[3],Sqrt[6])
+  mulq  %rbx                  # rdx:rax = Rsqrt[1]*Sqrt[7]
+  add   %rdi, %rax
+  adc   $0,   %rdx            # rdx:rax = Rsqrt[1]*Sqrt[7] + mulh(Rsqrt[1],Sqrt[6])
+  # rdx:rax = Rsqrt_err = sqrt*rsqrt, scaled by 2**127
+	add  	%rax, %rax
+  adc   %rdx, %rdx            # rdx:rax = rdx:rax << 1 = Rsqrt_err = sqrt*rsqrt, scaled by 2**128
+  call  .smul2
+  # rdx:rax = adj = Rsqrt_err*Rsqrt[1], scaled by 2**127
+  # Rsqrt[1:0] -= adj
+  neg %rax                    # rax = Rsqrt[0] = -adj[0]
+  sbb %rdx, %rbx              # rbx = Rsqrt[1] -= adj[1] - borrow
+  mov %rax, %rsi              # rsi = Rsqrt[0]
+  mov %rbx, %rdi              # rdi = Rsqrt[1]
 
   # Registers usage
   # rax - free
   # rdx - free
-  # rcx - (exp1^1)
-  # rbx - Sqrt_sqr_err[2]
-  # rsi - free
-  # rdi - Sqrt_sqr_err[1]
-  # rbp - Sqrt_sqr_err[4]
-  # r8  - sign(Sqrt_sqr_err)
-  # r9  - Sqrt[4]
-  # r10 - Sqrt_sqr_err[0]
-  # r11 - Sqrt_sqr_err[3]
-  # r12 - Sqrt[7]
-  # r13 - Sqrt[6]
-  # r14 - free
-  # r15 - Sqrt[5]
+  # rcx - exp0 = exp1^1
+  # rbx - free
+  # rsi - Rsqrt[0]
+  # rdi - Rsqrt[1]
+  # rbp - free
+  # r8  - free
+  # r9  - free
+  # r10 - src[2]
+  # r11 - src[3]
+  # r12 - src[4]
+  # r13 - src[5]
+  # r14 - Sqrt[6]
+  # r15 - Sqrt[7]
 
-  # Sqrt_sqr_err = abs(Sqrt_sqr_err)
-  xor  %r8, %r10
-  xor  %r8, %rdi
-  xor  %r8, %rbx
-  xor  %r8, %r11
-  xor  %r8, %rbp
+  # improve precision to 64*4-eps bits
+  # Sqrt_sqr[2:0] = sqr(Sqrt[7:6])[2:0], scaled by 2**(64*3-2)
+  mov   %r14, %rax            # rax = Sqrt[6]
+  mul   %rax                  # rdx:rax = Sqrt[6]*Sqrt[6]
+  mov   %rax, %r8             # r8  = Sqrt_sqr[0] = (Sqrt[6]*Sqrt[6]).LO
+  mov   %rdx, %r9             # r9  = Sqrt_sqr[1] = (Sqrt[6]*Sqrt[6]).HI
+  mov   %r15, %rbx            # rbx = Sqrt[7]
+  imul  %rbx, %rbx            # rbx = (Sqrt[7]*Sqrt[7]).LO
+  mov   %r15, %rax            # rax = Sqrt[7]
+  mul   %r14                  # rdx:rax = Sqrt[7]*Sqrt[6]
+  add   %rax, %rax
+  adc   %rdx, %rdx            # rdx:rax = Sqrt[7]*Sqrt[6]*2
+  add   %rax, %r9             # r9  = Sqrt_sqr[1] += (Sqrt[7]*Sqrt[6]*2).LO
+  adc   %rbx, %rdx            # rdx = Sqrt_sqr[2] += (Sqrt[7]*Sqrt[7]*2).LO + (Sqrt[7]*Sqrt[7]).LO + carry
+  # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
+  mov   %r11, %rax            # rax = src[3]
+  mov   %r12, %rbp            # rbp = src[4]
+  mov   %r13, %rbx            # rbx = src[5]
+  # rbx:rbp:rax - src[5:3],   scaled by 2**(64*3-1-exp1)
+  call .calc_adj
+  # rdx:r9:r8   - adj[2:0]
+  # rbx         - sign(adj)
+  add   %rdx,%r14             # r14 = Sqrt[6] += adj[2]
+  adc   %rbx,%r15             # r15 = Sqrt[7] += sign(adj) + carry
+  mov   %r8, %r12             # r12 = Sqrt[4]  = adj[0]
+  mov   %r9, %r13             # r13 = Sqrt[5]  = adj[1]
 
-  # Sqrt_adj = abs(err)*invS/2, scaled by 2**(511-exp1)
-  # multiply 5 qwords by 4 qwords, Sqrt_adj = 5 MS qwords of the product
-  mov 24(%rsp),%rax                # rax         = b[3] = invS[3]
-  mul %r10                         # rdx:rax     = a[0]*b[3]
-  mov %rdx,    %r10                # r10 = prod4 = (a[0]*b[3]).HI
-  mov 16(%rsp),%rax                # rax         = b[2] = invS[2]
-  mul %rdi                         # rdx:rax     = a[1]*b[2]
-  xor %esi,    %esi                # rsi = prod5 = 0
-  add %rdx,    %r10                # r10 = prod4+=(a[1]*b[2]).HI
-  adc %rsi,    %rsi                # rsi = prod5+= carry
-  mov 8(%rsp), %rax                # rax         = b[1] = invS[1]
-  mul %rbx                         # rdx:rax     = a[2]*b[1]
-  add %rdx,    %r10                # r10 = prod4+=(a[2]*b[1]).HI
-  adc $0,      %rsi                # rsi = prod5+= carry
-  mov (%rsp),  %rax                # rax         = b[0] = invS[0]
-  mul %r11                         # rdx:rax     = a[3]*b[0]
-  add %rdx,    %r10                # r10 = prod4+=(a[3]*b[0]).HI
-  adc $0,      %rsi                # rsi = prod5+= carry
+  # Registers usage
+  # rax - free
+  # rdx - free
+  # rcx - exp0 = exp1^1
+  # rbx - free
+  # rsi - Rsqrt[0]
+  # rdi - Rsqrt[1]
+  # rbp - free
+  # r8  - free (copy of Sqrt[4])
+  # r9  - free (copy of Sqrt[5])
+  # r10 - src[2]
+  # r11 - src[3]
+  # r12 - Sqrt[4]
+  # r13 - Sqrt[5]
+  # r14 - Sqrt[6]
+  # r15 - Sqrt[7]
 
-  mov 24(%rsp),%rax                # rax         = b[3] = invS[3]
-  mul %rdi                         # rdx:rax     = a[1]*b[3]
-  xor %edi,    %edi                # rdi = prod6 = 0
-  add %rax,    %r10                # r10 = prod4+=(a[1]*b[3]).LO
-  adc %rdx,    %rsi                # rsi = prod5+=(a[1]*b[3]).HI + carry
-  adc %rdi,    %rdi                # rdi = prod6+= carry
-  mov 16(%rsp),%rax                # rax         = b[2] = invS[2]
-  mul %rbx                         # rdx:rax     = a[2]*b[2]
-  add %rax,    %r10                # r10 = prod4+=(a[2]*b[2]).LO
-  adc %rdx,    %rsi                # rsi = prod5+=(a[2]*b[2]).HI + carry
-  adc $0,      %rdi                # rdi = prod6+= carry
-  mov 8(%rsp), %rax                # rax         = b[1] = invS[1]
-  mul %r11                         # rdx:rax     = a[3]*b[1]
-  add %rax,    %r10                # r10 = prod4+=(a[3]*b[1]).LO
-  adc %rdx,    %rsi                # rsi = prod5+=(a[3]*b[1]).HI + carry
-  adc $0,      %rdi                # rdi = prod6+= carry
-  mov (%rsp),  %rax                # rax         = b[0] = invS[0]
-  mul %rbp                         # rdx:rax     = a[4]*b[0]
-  add %rax,    %r10                # r10 = prod4+=(a[4]*b[0]).LO
-  adc %rdx,    %rsi                # rsi = prod5+=(a[4]*b[0]).HI + carry
-  adc $0,      %rdi                # rdi = prod6+= carry
+  # improve precision to 64*6-eps bits
+  # Sqrt_sqr[2:0] = sqr(Sqrt[7:4])[4:2], scaled by 2**(64*3-2)
+  # non-diagonal
+  mov   %r8,  %rax            # rax     = Sqrt[4]
+  mul   %r9                   # rdx:rax = Sqrt[4]*Sqrt[5]
+  mov   %rdx, %r8             # r8      = Sqrt_sqr[0] = (Sqrt[4]*Sqrt[5]).HI
+  mov   %r12, %rax            # rax     = Sqrt[4]
+  mul   %r14                  # rdx:rax = Sqrt[4]*Sqrt[6]
+  xor   %r9d, %r9d            # r9      = Sqrt_sqr[1] = 0
+  add   %rax, %r8             # r8      = Sqrt_sqr[0] += (Sqrt[4]*Sqrt[6]).LO
+  adc   %rdx, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[4]*Sqrt[6]).HI + carry
+  mov   %r12, %rax            # rax     = Sqrt[4]
+  mul   %r15                  # rdx:rax = Sqrt[4]*Sqrt[7]
+  xor   %ebx, %ebx            # rbx     = Sqrt_sqr[2] = 0
+  add   %rax, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[4]*Sqrt[7]).LO
+  adc   %rdx, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[4]*Sqrt[7]).HI + carry
+  mov   %r13, %rax            # rax     = Sqrt[5]
+  mul   %r14                  # rdx:rax = Sqrt[5]*Sqrt[6]
+  add   %rax, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[5]*Sqrt[6]).LO
+  adc   %rdx, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[5]*Sqrt[6]).HI + carry
+  mov   %r13, %rax            # rax     = Sqrt[5]
+  imul  %r15, %rax            # rax     = (Sqrt[5]*Sqrt[7]).LO
+  add   %rax, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[5]*Sqrt[7]).LO
 
-  mov 24(%rsp),%rax                # rax         = b[3] = invS[3]
-  mul %rbx                         # rdx:rax     = a[2]*b[3]
-  xor %ebx,    %ebx                # rbx = prod7 = 0
-  add %rax,    %rsi                # rsi = prod5+=(a[2]*b[3]).LO
-  adc %rdx,    %rdi                # rdi = prod6+=(a[2]*b[3]).HI + carry
-  adc %rbx,    %rbx                # rbx = prod7+= carry
-  mov 16(%rsp),%rax                # rax         = b[2] = invS[2]
-  mul %r11                         # rdx:rax     = a[3]*b[2]
-  add %rax,    %rsi                # rsi = prod5+=(a[3]*b[2]).LO
-  adc %rdx,    %rdi                # rdi = prod6+=(a[3]*b[2]).HI + carry
-  adc $0,      %rbx                # rbx = prod7+= carry
-  mov 8(%rsp), %rax                # rax         = b[1] = invS[1]
-  mul %rbp                         # rdx:rax     = a[4]*b[1]
-  add %rax,    %rsi                # rsi = prod5+=(a[1]*b[4]).LO
-  adc %rdx,    %rdi                # rdi = prod6+=(a[1]*b[4]).HI + carry
-  adc $0,      %rbx                # rbx = prod7+= carry
+  add   %r8,  %r8
+  adc   %r9,  %r9
+  adc   %rbx, %rbx            # non-diagonal *= 2
 
-  mov 24(%rsp),%rax                # rax         = b[3] = invS[3]
-  mul %r11                         # rdx:rax     = a[3]*b[3]
-  xor %r11d,   %r11d               # r11 = prod8 = 0
-  add %rax,    %rdi                # rdi = prod6+=(a[3]*b[3]).LO
-  adc %rdx,    %rbx                # rbx = prod7+=(a[3]*b[3]).HI + carry
-  adc %r11,    %r11                # r11 = prod8+= carry
-  mov 16(%rsp),%rax                # rax         = b[2] = invS[2]
-  mul %rbp                         # rdx:rax     = a[4]*b[2]
-  add %rax,    %rdi                # rdi = prod6+=(a[4]*b[2]).LO
-  adc %rdx,    %rbx                # rbx = prod7+=(a[4]*b[2]).HI + carry
-  adc $0,      %r11                # r11 = prod8+= carry
+  mov   %r13, %rax            # rax     = Sqrt[5]
+  mul   %rax                  # rdx:rax = Sqrt[5]*Sqrt[5]
+  mov   %r14, %rbp            # rbp     = Sqrt[6]
+  imul  %rbp, %rbp            # rbp     = (Sqrt[6]*Sqrt[6]).LO
 
-  mov 24(%rsp),%rax                # rax         = b[3] = invS[3]
-  mul %rbp                         # rdx:rax     = a[4]*b[3]
-  add %rax,    %rbx                # rbx = prod7+=(a[4]*b[3]).LO
-  adc %rdx,    %r11                # r11 = prod8+=(a[4]*b[3]).HI + carry
-  # r11:rbx:rdi:rsi:r10 = abs_sqrt_adj = abs(err)*invS/2, scaled by 2**(511-exp1)
+  add   %rax, %r8
+  adc   %rdx, %r9
+  adc   %rbp, %rbx            # non-diagonal += diagonal
+  mov   %rbx, %rdx
+  # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
 
-  # change sign to the opposite of original sign of err
-  not %r8
-  xor %r8, %r10
-  xor %r8, %rsi
-  xor %r8, %rdi
-  xor %r8, %rbx
-  xor %r8, %r11
-  # r11:rbx:rdi:rsi:r10 = Sqrt_adj = -err*invS/2, scaled by 2**(511-exp1)
+  mov 88(%rsp), %rax          # rax = src[1]
+  mov %r10,     %rbp          # rbp = src[2]
+  mov %r11,     %rbx          # rbx = src[3]
+  # rbx:rbp:rax - src[3:1],   scaled by 2**(64*3-1-exp1)
+  call .calc_adj
+  # rdx:r9:r8   - adj[2:0]
+  # rbx         - sign(adj)
+  add   %rdx,%r12             # r12 = Sqrt[4] += adj[2]
+  adc   %rbx,%r13             # r13 = Sqrt[5] += sign(adj) + carry
+  adc   %rbx,%r14             # r14 = Sqrt[6] += sign(adj) + carry
+  adc   %rbx,%r15             # r15 = Sqrt[7] += sign(adj) + carry
+  mov   %r8, %r10             # r10 = Sqrt[2]  = adj[0]
+  mov   %r9, %r11             # r11 = Sqrt[3]  = adj[1]
 
-  # r11:rbx:rdi:rsi:r10 = Sqrt_adj = -err*invS/2, scaled by 2**(511-exp1)
-	shrdq	%cl, %rsi, %r10
-	shrdq	%cl, %rdi, %rsi
-	shrdq	%cl, %rbx, %rdi
-	shrdq	%cl, %r11, %rbx
-  sar   %cl, %r11
-  # r11:rbx:rdi:rsi:r10 = Sqrt_adj = -err*invS/2, scaled by 2**511
+  # Registers usage
+  # rax - free
+  # rdx - free
+  # rcx - exp0 = exp1^1
+  # rbx - free
+  # rsi - Rsqrt[0]
+  # rdi - Rsqrt[1]
+  # rbp - free
+  # r8  - free (copy of Sqrt[2])
+  # r9  - free (copy of Sqrt[3])
+  # r10 - Sqrt[2]
+  # r11 - Sqrt[3]
+  # r12 - Sqrt[4]
+  # r13 - Sqrt[5]
+  # r14 - Sqrt[6]
+  # r15 - Sqrt[7]
 
-  # Sqrt += Sqrt_adj
-  add  %r11, %r9
-  adc  %r8,  %r15
-  adc  %r8,  %r13
-  adc  %r8,  %r12
+  # improve precision to 64*6-eps bits
+  # Sqrt_sqr[2:0] = sqr(Sqrt[7:2])[6:4], scaled by 2**(64*3-2)
+  # non-diagonal
+  mov   %r8,  %rax            # rax     = Sqrt[2]
+  mul   %r13                  # rdx:rax = Sqrt[2]*Sqrt[5]
+  mov   %rdx, %r8             # r8      = Sqrt_sqr[0] = (Sqrt[2]*Sqrt[5]).HI
+  mov   %r10, %rax            # rax     = Sqrt[2]
+  mul   %r14                  # rdx:rax = Sqrt[2]*Sqrt[6]
+  xor   %r9d, %r9d            # r9      = Sqrt_sqr[1] = 0
+  add   %rax, %r8             # r8      = Sqrt_sqr[0] += (Sqrt[2]*Sqrt[6]).LO
+  adc   %rdx, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[2]*Sqrt[6]).HI + carry
+  mov   %r11, %rax            # rax     = Sqrt[3]
+  mul   %r12                  # rdx:rax = Sqrt[3]*Sqrt[4]
+  add   %rdx, %r8             # r8      = Sqrt_sqr[0] += (Sqrt[3]*Sqrt[4]).HI
+  adc   $0,   %r9             # r9      = Sqrt_sqr[1] += carry
+  mov   %r11, %rax            # rax     = Sqrt[3]
+  mul   %r13                  # rdx:rax = Sqrt[3]*Sqrt[5]
+  xor   %ebx, %ebx            # rbx     = Sqrt_sqr[2] = 0
+  add   %rax, %r8             # r8      = Sqrt_sqr[0] += (Sqrt[3]*Sqrt[5]).LO
+  adc   %rdx, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[3]*Sqrt[5]).HI + carry
+  adc   $0,   %rbx            # rbx     = Sqrt_sqr[2] += carry
+  mov   %r10, %rax            # rax     = Sqrt[2]
+  mul   %r15                  # rdx:rax = Sqrt[2]*Sqrt[7]
+  add   %rax, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[2]*Sqrt[7]).LO
+  adc   %rdx, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[2]*Sqrt[7]).HI + carry
+  mov   %r11, %rax            # rax     = Sqrt[3]
+  mul   %r14                  # rdx:rax = Sqrt[3]*Sqrt[6]
+  add   %rax, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[3]*Sqrt[6]).LO
+  adc   %rdx, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[3]*Sqrt[6]).HI + carry
+  mov   %r12, %rax            # rax     = Sqrt[4]
+  mul   %r13                  # rdx:rax = Sqrt[4]*Sqrt[5]
+  add   %rax, %r9             # r9      = Sqrt_sqr[1] += (Sqrt[4]*Sqrt[5]).LO
+  adc   %rdx, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[4]*Sqrt[5]).HI + carry
+  mov   %r11, %rax            # rax     = Sqrt[3]
+  imul  %r15, %rax            # rax     = (Sqrt[3]*Sqrt[7]).LO
+  add   %rax, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[3]*Sqrt[7]).LO
+  mov   %r12, %rax            # rax     = Sqrt[4]
+  imul  %r14, %rax            # rax     = (Sqrt[4]*Sqrt[6]).LO
+  add   %rax, %rbx            # rbx     = Sqrt_sqr[2] += (Sqrt[4]*Sqrt[6]).LO
+
+  add   %r8,  %r8
+  adc   %r9,  %r9
+  adc   %rbx, %rbx            # non-diagonal *= 2
+
+  # diagonal elements
+  mov   %r12, %rax            # rax     = Sqrt[4]
+  mul   %rax                  # rdx:rax = Sqrt[4]*Sqrt[4]
+  mov   %r13, %rbp            # rbp     = Sqrt[5]
+  imul  %rbp, %rbp            # rbp     = (Sqrt[5]*Sqrt[5]).LO
+
+  add   %rax, %r8
+  adc   %rdx, %r9
+  adc   %rbp, %rbx            # non-diagonal += diagonal
+  mov   %rbx, %rdx
+  # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
+
+  xor %eax,     %eax          # rax = 0
+  mov 80(%rsp), %rbp          # rbp = src[0]
+  mov 88(%rsp), %rbx          # rbx = src[1]
+  # rbx:rbp:rax - src[2:0]:0, scaled by 2**(64*3-1-exp1)
+  call .calc_adj
+  # rdx:r9:r8   - adj[2:0]
+  # rbx         - sign(adj)
+                              # r8  = Sqrt[0] += adj[0]
+                              # r9  = Sqrt[1] += adj[1]
+  add   %rdx,%r10             # r10 = Sqrt[2] += adj[2]
+  adc   %rbx,%r11             # r11 = Sqrt[3] += sign(adj) + carry
+  adc   %rbx,%r12             # r12 = Sqrt[4] += sign(adj) + carry
+  adc   %rbx,%r13             # r13 = Sqrt[5] += sign(adj) + carry
+  adc   %rbx,%r14             # r14 = Sqrt[6] += sign(adj) + carry
+  adc   %rbx,%r15             # r15 = Sqrt[7] += sign(adj) + carry
 
   # Registers usage
   # rax - free
   # rdx - free
   # rcx - free
-  # rbx - Sqrt[3]
-  # rsi - Sqrt[1]
-  # rdi - Sqrt[2]
+  # rbx - free
+  # rsi - free
+  # rdi - free
   # rbp - free
-  # r8  - free
-  # r9  - Sqrt[4]
-  # r10 - Sqrt[0] = lsw
-  # r11 - free
-  # r12 - Sqrt[7]
-  # r13 - Sqrt[6]
-  # r14 - free
-  # r15 - Sqrt[5]
+  # r8  - Sqrt[0] = lsw
+  # r9  - Sqrt[1]
+  # r10 - Sqrt[2]
+  # r11 - Sqrt[3]
+  # r12 - Sqrt[4]
+  # r13 - Sqrt[5]
+  # r14 - Sqrt[6]
+  # r15 - Sqrt[7]
 
+  mov 72(%rsp), %rcx          # rcx = dst, restore from RCX home
   # check if lsw is close to the middle of qword range
   UINT64_MID = (1) << 63;
-  MAX_ERR    = (1) << 20; # probably less, but it does not cost much to be on the safe side
+  MAX_ERR    = (1) << 15;     # probably less, but it does not cost much to be on the safe side
 	movabsq	$(UINT64_MID - MAX_ERR),%rax
-  mov %r10, %rdx
-  sub %rax, %rdx                   # rdx = lsw - (UINT64_MID-MAX_ERR)
+  mov %r8, %rdx
+  sub %rax, %rdx              # rdx = lsw - (UINT64_MID-MAX_ERR)
   cmp $(MAX_ERR*2), %rdx
   jae .round_and_copy
     # We are very close to tip point
@@ -579,74 +414,73 @@ asm_sqrt448:                            # @asm_sqrt448
     # The routine is supposed to reach this point very rarely, so calculation of TP_sqr[8] optimized for size rather than for speed
 
     # store sqrt(7:1) in work buffer
-    mov %rsi, 0(%rsp)
-    mov %rdi, 8(%rsp)
-    mov %rbx, 16(%rsp)
-    mov %r9,  24(%rsp)
-    mov %r15, 32(%rsp)
-    mov %r13, 40(%rsp)
-    mov %r12, 48(%rsp)
+    mov %r9,   0(%rcx)
+    mov %r10,  8(%rcx)
+    mov %r11, 16(%rcx)
+    mov %r12, 24(%rcx)
+    mov %r13, 32(%rcx)
+    mov %r14, 40(%rcx)
+    mov %r15, 48(%rcx)
 
-    mov %rsi, %rcx                # rcx  = acc0 = a[0]
+    # r9   = acc0 = a[0]
     xor %ebp, %ebp                # rbp  = acc1
-    mov $1,   %r8d                # r8d  = K = 1
+    mov $1,   %ebx                # ebx  = K = 1
     .sqr_tip_point_k:
-      xor %r11d, %r11d            # r11 = acc2
-      add (%rsp,%r8,8), %rbp      # rbp = acc1 += a[K];
-      adc %r11, %r11              # r11 = acc2 += carry
-      xor %r10d, %r10d            # r10d = i = 0
-      lea -1(%r8), %r14           # r14d = j = K-1
+      xor %esi, %esi              # rsi = acc2
+      add (%rcx,%rbx,8), %rbp     # rbp = acc1 += a[K];
+      adc %rsi, %rsi              # rsi = acc2 += carry
+      xor %r8d, %r8d              # r8d = i = 0
+      lea -1(%rbx), %rdi          # edi = j = K-1
       .sqr_tip_point_j:
-        mov  (%rsp,%r10,8),%rax   # rax = a[i]
-        mulq (%rsp,%r14,8)        # rdx:rax = a[i]*a[j]
-        add %rax, %rcx            # rcx = acc0 += (a[i]*a[j]).LO
+        mov  (%rcx,%r8, 8),%rax   # rax = a[i]
+        mulq (%rcx,%rdi,8)        # rdx:rax = a[i]*a[j]
+        add %rax, %r9             # r9  = acc0 += (a[i]*a[j]).LO
         adc %rdx, %rbp            # rbp = acc1 += (a[i]*a[j]).HI + carry
-        adc $0,   %r11            # r11 = acc2 += carry
-        inc %r10d                 # ++i
-      sub $1, %r14d               # --j
+        adc $0,   %rsi            # rsi = acc2 += carry
+        inc %r8d                  # ++i
+      sub $1, %edi                # --j
       jge .sqr_tip_point_j        # j >= 0
 
-      mov %rbp, %rcx              # rcx = acc0 = acc1
-      mov %r11, %rbp              # rbp = acc1 = acc2
-    inc %r8d                      # ++K
-    cmp $7, %r8d                  # while (K < 7)
+      mov %rbp, %r9               # r9  = acc0 = acc1
+      mov %rsi, %rbp              # rbp = acc1 = acc2
+    inc %ebx                      # ++K
+    cmp $7, %ebx                  # while (K < 7)
     jb  .sqr_tip_point_k
 
-    xor %r8d, %r8d                # r8d  = i = 0
-    mov $6,   %r14d               # r14d = j = 6
+    xor %ebx, %ebx                # ebx = i = 0
+    mov $6,   %edi                # edi = j = 6
     .sqr_tip_point_j2:
-      mov  (%rsp,%r8,8),%rax      # rax = a[i]
-      imul (%rsp,%r14,8),%rax     # rax = (a[i]*a[j]).LO
-      add   %rax, %rcx            # rcx = acc0 += (a[i]*a[j]).LO
-      inc %r8d                    # ++i
-    sub $1, %r14d                 # --j
+      mov  (%rcx,%rbx,8),%rax     # rax = a[i]
+      imul (%rcx,%rdi,8),%rax     # rax = (a[i]*a[j]).LO
+      add   %rax, %r9             # r9  = acc0 += (a[i]*a[j]).LO
+      inc %ebx                    # ++i
+    sub $1, %edi                  # --j
     jge .sqr_tip_point_j2         # j >= 0
 
-    # rcx = TP_sqr[8]
+    # r9  = TP_sqr[8]
 
-    lea (%rcx,%rcx), %r10         # r10= lsw = acc0 << 1, that moves bit 62 in position 63, where it inspected by the rest of the code
+    lea (%r9 ,%r9 ), %r8          # r8= lsw = acc0 << 1, that moves bit 62 in position 63, where it inspected by the rest of the code
+    mov 0(%rcx), %r9              # restore r9=Sqrt[1]
   .round_and_copy:
-  mov 56(%rsp), %rcx              # rcx = dst
-  xor %eax, %eax                  # rax = 0
-  add %r10, %r10                  # carry = bit 63 of lsw
+  xor %eax,%eax                   # rax = 0
+  add %r8, %r8                    # carry = bit 63 of lsw
   # add carry
-  adc %rax, %rsi
-  adc %rax, %rdi
-  adc %rax, %rbx
   adc %rax, %r9
-  adc %rax, %r15
-  adc %rax, %r13
+  adc %rax, %r10
+  adc %rax, %r11
   adc %rax, %r12
-  # strore result at dst
-  mov %rsi,  0(%rcx)
-  mov %rdi,  8(%rcx)
-  mov %rbx, 16(%rcx)
-  mov %r9,  24(%rcx)
-  mov %r15, 32(%rcx)
-  mov %r13, 40(%rcx)
-  mov %r12, 48(%rcx)
+  adc %rax, %r13
+  adc %rax, %r14
+  adc %rax, %r15
+  # store result at dst
+  mov %r9,   0(%rcx)
+  mov %r10,  8(%rcx)
+  mov %r11, 16(%rcx)
+  mov %r12, 24(%rcx)
+  mov %r13, 32(%rcx)
+  mov %r14, 40(%rcx)
+  mov %r15, 48(%rcx)
 
-	addq	$96, %rsp
 	popq	%rbx
 	popq	%rbp
 	popq	%rdi
@@ -656,6 +490,95 @@ asm_sqrt448:                            # @asm_sqrt448
 	popq	%r14
 	popq	%r15
 	retq
+
+.p2align	4, 0x90
+.smul2:
+# signed multiply 128-bit number a, by 64-bit number b, return upper 128 bits of the product
+# inputs:
+# rdx:rax - a[1:0]
+# rbx     - b, b >= 2**63
+# outputs:
+# rdx:rax - result
+# rbx     - b (preserved)
+# other registers affected:
+# rdi, rbp
+  mov   %rdx, %rbp                # rbp     = a[1]
+  mul   %rbx                      # rdx:rax = a[0]*b
+  mov   %rdx, %rdi                # rdi     = (a[0]*b).HI
+  mov   %rbp, %rax                # rax     = a[1]
+  imul  %rbx                      # rdx:rax = a[1]*(b-2**64)
+  add   %rdi, %rax                # rdx:rax += (a[0]*b).HI
+  adc   %rbp, %rdx                # rdx:rax += a[1] + carry (emulate signed*unsigned multiplication)
+  ret
+
+.p2align	4, 0x90
+.calc_adj:
+# Calculate Sqrt adjustment
+# inputs:
+# rbx:rbp:rax - src[2:0],   scaled by 2**(64*3-1-exp1)
+# rcx         - exp0 = 1-exp1
+# rdi:rsi     - rsqrt[1:0], scaled by 2**(64*2)
+# rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
+# outputs:
+# rdx:r9:r8   - adj[2:0]
+# rcx         - exp0 = 1-exp1                   (preserved)
+# rdi:rsi     - rsqrt[1:0], scaled by 2**(64*2) (preserved)
+# rbx         - sign(adj)
+# Other registers affected:
+# None
+  # left shift by exp0
+	shldq	%cl, %r9,  %rdx
+	shldq	%cl, %r8,  %r9
+  shl   %cl, %r8              # rdx:r9:r8 = rdx:r9:r8 << (1-exp1) = sqr[2:0] scaled by 2**(64*3-1-exp1)
+  # err = src[2:0] - sqr
+  sub   %r8,  %rax            # rax = err[0]
+  sbb   %r9,  %rbp            # rbp = err[1]
+  sbb   %rdx, %rbx            # rbx = err[2]
+  # mul3sX2u - multiply signed 192-bit number err[2:0] by unsigned 128-bit number rsqrt[1:0]
+  # start unsigned multiplication
+  mul   %rdi                  # rdx:rax = err[0]*rsqrt[1]
+  mov   %rdx, %r8             # r8  = adj[0] = (err[0]*rsqrt[1]).HI
+  mov   %rbp, %rax            # rax = err[1]
+  mul   %rsi                  # rdx:rax = err[1]*rsqrt[0]
+  xor   %r9d, %r9d            # r8  = adj[1] = 0
+  add   %rdx, %r8             # r8  = adj[0] += (err[1]*rsqrt[0]).HI
+  adc   %r9,  %r9             # r9  = adj[1] += carry
+
+  mov   %rbp, %rax            # rax = err[1]
+  mul   %rdi                  # rdx:rax = err[1]*rsqrt[1]
+  add   %rax, %r8             # r8  = adj[0] += (err[1]*rsqrt[1]).LO
+  adc   %rdx, %r9             # r9  = adj[1] += (err[1]*rsqrt[1]).HI + carry
+  mov   %rbx, %rax            # rax = err[2]
+  mul   %rsi                  # rdx:rax = err[2]*rsqrt[0]
+  xor   %ebp, %ebp            # rbp = adj[1]' = 0
+  add   %rax, %r8             # r8  = adj[0]  += (err[2]*rsqrt[0]).LO
+  adc   %rdx, %rbp            # rbp = adj[1]' += (err[2]*rsqrt[0]).HI + carry
+
+  mov   %rbx, %rax            # rax = err[2]
+  mul   %rdi                  # rdx:rax = err[2]*rsqrt[1]
+  add   %rax, %r9             # r9  = adj[1] += (err[2]*rsqrt[1]).LO
+  adc   $0,   %rdx            # rdx = adj[2] =  (err[2]*rsqrt[1]).HI + carry
+  add   %rbp, %r9             # r9  = adj[1] += adj[1]'
+  adc   $0,   %rdx            # rdx = adj[2] += carry
+  # unsigned multiplication done
+
+  # convert unsigned product to signed
+  sar   $63,  %rbx            # rbx = sign(adj) = (err[2] < 0) ? -1 : 0
+  mov   %rsi, %rax
+  and   %rbx, %rax            # rax = rsqrt[0] & sign(adj)
+  mov   %rdi, %rbp
+  and   %rbx, %rbp            # rbp = rsqrt[1] & sign(adj)
+  sub   %rax, %r9             # r9  = adj[1] -= (rsqrt[0] & sign(adj))
+  sbb   %rbp, %rdx            # rdx = adj[2] -= (rsqrt[0] & sign(adj)) - borrow
+
+  # rdx:r9:r8 = adj[2:0]
+  # arithmetic right shift by exp0
+  shrdq	%cl, %r9,  %r8
+  shrdq	%cl, %rdx, %r9
+  sar   %cl, %rdx
+  # rdx:r9:r8 = adj[2:0], scaled by 2**(64*3-1)
+  ret
+
 	.seh_handlerdata
 	.text
 	.seh_endproc
