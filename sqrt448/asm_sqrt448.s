@@ -47,15 +47,8 @@ asm_sqrt448:                      # @asm_sqrt448
 
   # rcx = dst, rdx = src, r8d = exp1
 	movq	48(%rdx), %rax        # rax = src[6] = x
-	movq	  (%rdx), %rbx        # rbx = src[0]
-	movq	 8(%rdx), %rsi        # rsi = src[1]
-	movq	40(%rdx), %r13        # r13 = src[5]
-	movq	32(%rdx), %r12        # r12 = src[4]
-	movq	24(%rdx), %r11        # r11 = src[3]
-	movq	16(%rdx), %r10        # r10 = src[2]
+  movq  %rdx, %r9             # r9  = src
   movq  %rcx, 72(%rsp)        # save dst pointer at RCX home
-  movq  %rbx, 80(%rsp)        # save src[0] at RDX home
-  movq  %rsi, 88(%rsp)        # save src[1] at R8  home
 	movq	%rax, %rbx            # rbx = x
 	movq	%rax, %rsi            # rsi = x = src[6]
 	leaq	_rsqrt64_tables(%rip), %rdi
@@ -130,27 +123,59 @@ asm_sqrt448:                      # @asm_sqrt448
   # rdi - free
   # rbp - free
   # r8  - free
+  # r9  - src
+  # r10 - free
+  # r11 - free
+  # r12 - free
+  # r13 - free
+  # r14 - free
+  # r15 - Sqrt[7]
+
+	movq	  (%r9), %rbp        # rbp = src[0]
+	movq	 8(%r9), %rdi        # rdi = src[1]
+	movq	16(%r9), %r10        # r10 = src[2]
+	movq	24(%r9), %r11        # r11 = src[3]
+	movq	32(%r9), %r12        # r12 = src[4]
+	movq	40(%r9), %r13        # r13 = src[5]
+  xor   %eax, %eax           # rax = 0
+	shrdq	%cl, %rbp, %rax      # rax = ssrc[0] = ((src[0]:0) >> exp0).LO
+	shrdq	%cl, %rdi, %rbp      # rbp = ssrc[1] = ((src[1:0]) >> exp0).LO
+	shrdq	%cl, %r10, %rdi      # rdi = ssrc[2] = ((src[2:1]) >> exp0).LO
+	shrdq	%cl, %r11, %r10      # r10 = ssrc[3] = ((src[3:2]) >> exp0).LO
+	shrdq	%cl, %r12, %r11      # r11 = ssrc[4] = ((src[4:3]) >> exp0).LO
+	shrdq	%cl, %r13, %r12      # r12 = ssrc[5] = ((src[5:4]) >> exp0).LO
+	shrdq	%cl, %rsi, %r13      # r13 = ssrc[6] = ((src[6:5]) >> exp0).LO
+  shr   %cl, %rsi            # rsi = ssrc[7] = src[6] >> exp0
+
+  mov  %rax, 80(%rsp)        # save ssrc[0] at RDX home
+  mov  %rbp, 88(%rsp)        # save ssrc[1] at R8  home
+
+  # Registers usage
+  # rax - free
+  # rdx - free (copy of Sqrt[7])
+  # rcx - free
+  # rbx - Rsqrt[1]
+  # rsi - ssrc[7]
+  # rdi - ssrc[2]
+  # rbp - free
+  # r8  - free
   # r9  - free
-  # r10 - src[2]
-  # r11 - src[3]
-  # r12 - src[4]
-  # r13 - src[5]
+  # r10 - ssrc[3]
+  # r11 - ssrc[4]
+  # r12 - ssrc[5]
+  # r13 - ssrc[6]
   # r14 - free
   # r15 - Sqrt[7]
 
   # improve precision of Sqrt to 64*2-eps bits
   mov   %rdx, %rax            # rax = Sqrt[7]
   mulq  %rax                  # rdx:rax = sqr(Sqrt[7]) scaled by 2**126
-	shldq	%cl, %rax, %rdx
-  shl   %cl, %rax             # rdx:rax = rdx:rax << (1-exp1) = sqr(sqrt(Sqrt[7])) scaled by 2**(127-exp1)
-  # Sqrt_sqr = err = Sqrt**2 - src
+  # Sqrt_sqr = err = Sqrt**2 - ssrc[7:6]
   sub   %r13, %rax
   sbb   %rsi, %rdx
   # rdx:rax = err = Sqrt**2 - src
   call  .smul2
-  # rdx:rax = err*invS/2, scaled by 2**(128-exp1)
-	shrdq	%cl, %rdx, %rax
-  sar   %cl, %rdx             # rdx:rax = abs(err)*Rsqrt[1]/2, scaled by 2**127
+  # rdx:rax = err*invS/2, scaled by 2**127
   # Sqrt -= err*invS/2
   neg   %rax                  # rax = Sqrt[6] = -adj[0]
   sbb   %rdx, %r15            # r15 = Sqrt[7] -= adj[1] - borrow
@@ -160,9 +185,9 @@ asm_sqrt448:                      # @asm_sqrt448
   # Multiply sqrt[7:6] by Rsqrt[1], take upper 128 bits of the product
   mul   %rbx                  # rdx:rax = Rsqrt[1]*Sqrt[6]
   mov   %r15, %rax            # rax     = Sqrt[7]
-  mov   %rdx, %rdi            # rdi     = mulh(invS[3],Sqrt[6])
+  mov   %rdx, %rcx            # rcx     = mulh(invS[3],Sqrt[6])
   mulq  %rbx                  # rdx:rax = Rsqrt[1]*Sqrt[7]
-  add   %rdi, %rax
+  add   %rcx, %rax
   adc   $0,   %rdx            # rdx:rax = Rsqrt[1]*Sqrt[7] + mulh(Rsqrt[1],Sqrt[6])
   # rdx:rax = Rsqrt_err = sqrt*rsqrt, scaled by 2**127
 	add  	%rax, %rax
@@ -173,22 +198,22 @@ asm_sqrt448:                      # @asm_sqrt448
   neg %rax                    # rax = Rsqrt[0] = -adj[0]
   sbb %rdx, %rbx              # rbx = Rsqrt[1] -= adj[1] - borrow
   mov %rax, %rsi              # rsi = Rsqrt[0]
-  mov %rbx, %rdi              # rdi = Rsqrt[1]
+  mov %rbx, %rcx              # rcx = Rsqrt[1]
 
   # Registers usage
   # rax - free
   # rdx - free
-  # rcx - exp0 = exp1^1
+  # rdi - ssrc[2]
   # rbx - free
   # rsi - Rsqrt[0]
-  # rdi - Rsqrt[1]
+  # rcx - Rsqrt[1]
   # rbp - free
   # r8  - free
   # r9  - free
-  # r10 - src[2]
-  # r11 - src[3]
-  # r12 - src[4]
-  # r13 - src[5]
+  # r10 - ssrc[3]
+  # r11 - ssrc[4]
+  # r12 - ssrc[5]
+  # r13 - ssrc[6]
   # r14 - Sqrt[6]
   # r15 - Sqrt[7]
 
@@ -207,10 +232,10 @@ asm_sqrt448:                      # @asm_sqrt448
   add   %rax, %r9             # r9  = Sqrt_sqr[1] += (Sqrt[7]*Sqrt[6]*2).LO
   adc   %rbx, %rdx            # rdx = Sqrt_sqr[2] += (Sqrt[7]*Sqrt[7]*2).LO + (Sqrt[7]*Sqrt[7]).LO + carry
   # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
-  mov   %r11, %rax            # rax = src[3]
-  mov   %r12, %rbp            # rbp = src[4]
-  mov   %r13, %rbx            # rbx = src[5]
-  # rbx:rbp:rax - src[5:3],   scaled by 2**(64*3-1-exp1)
+  mov   %r11, %rax            # rax = ssrc[4]
+  mov   %r12, %rbp            # rbp = ssrc[5]
+  mov   %r13, %rbx            # rbx = ssrc[6]
+  # rbx:rbp:rax - src[5:3],   scaled by 2**(64*3-2)
   call .calc_adj
   # rdx:r9:r8   - adj[2:0]
   # rbx         - sign(adj)
@@ -222,15 +247,15 @@ asm_sqrt448:                      # @asm_sqrt448
   # Registers usage
   # rax - free
   # rdx - free
-  # rcx - exp0 = exp1^1
+  # rdi - ssrc[2]
   # rbx - free
   # rsi - Rsqrt[0]
-  # rdi - Rsqrt[1]
+  # rcx - Rsqrt[1]
   # rbp - free
   # r8  - free (copy of Sqrt[4])
   # r9  - free (copy of Sqrt[5])
-  # r10 - src[2]
-  # r11 - src[3]
+  # r10 - ssrc[3]
+  # r11 - ssrc[4]
   # r12 - Sqrt[4]
   # r13 - Sqrt[5]
   # r14 - Sqrt[6]
@@ -275,10 +300,10 @@ asm_sqrt448:                      # @asm_sqrt448
   mov   %rbx, %rdx
   # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
 
-  mov 88(%rsp), %rax          # rax = src[1]
-  mov %r10,     %rbp          # rbp = src[2]
-  mov %r11,     %rbx          # rbx = src[3]
-  # rbx:rbp:rax - src[3:1],   scaled by 2**(64*3-1-exp1)
+  mov %rdi,     %rax          # rax = ssrc[2]
+  mov %r10,     %rbp          # rbp = ssrc[3]
+  mov %r11,     %rbx          # rbx = ssrc[4]
+  # rbx:rbp:rax - src[3:1],   scaled by 2**(64*3-2)
   call .calc_adj
   # rdx:r9:r8   - adj[2:0]
   # rbx         - sign(adj)
@@ -292,10 +317,10 @@ asm_sqrt448:                      # @asm_sqrt448
   # Registers usage
   # rax - free
   # rdx - free
-  # rcx - exp0 = exp1^1
+  # rdi - ssrc[2]
   # rbx - free
   # rsi - Rsqrt[0]
-  # rdi - Rsqrt[1]
+  # rcx - Rsqrt[1]
   # rbp - free
   # r8  - free (copy of Sqrt[2])
   # r9  - free (copy of Sqrt[3])
@@ -362,10 +387,10 @@ asm_sqrt448:                      # @asm_sqrt448
   mov   %rbx, %rdx
   # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
 
-  xor %eax,     %eax          # rax = 0
-  mov 80(%rsp), %rbp          # rbp = src[0]
-  mov 88(%rsp), %rbx          # rbx = src[1]
-  # rbx:rbp:rax - src[2:0]:0, scaled by 2**(64*3-1-exp1)
+  mov 80(%rsp), %rax          # rax = ssrc[0]
+  mov 88(%rsp), %rbp          # rbp = ssrc[1]
+  mov %rdi,     %rbx          # rbx = ssrc[2]
+  # rbx:rbp:rax - src[2:0]:0, scaled by 2**(64*3-2)
   call .calc_adj
   # rdx:r9:r8   - adj[2:0]
   # rbx         - sign(adj)
@@ -501,13 +526,13 @@ asm_sqrt448:                      # @asm_sqrt448
 # rdx:rax - result
 # rbx     - b (preserved)
 # other registers affected:
-# rdi, rbp
+# rcx, rbp
   mov   %rdx, %rbp                # rbp     = a[1]
   mul   %rbx                      # rdx:rax = a[0]*b
-  mov   %rdx, %rdi                # rdi     = (a[0]*b).HI
+  mov   %rdx, %rcx                # rcx     = (a[0]*b).HI
   mov   %rbp, %rax                # rax     = a[1]
   imul  %rbx                      # rdx:rax = a[1]*(b-2**64)
-  add   %rdi, %rax                # rdx:rax += (a[0]*b).HI
+  add   %rcx, %rax                # rdx:rax += (a[0]*b).HI
   adc   %rbp, %rdx                # rdx:rax += a[1] + carry (emulate signed*unsigned multiplication)
   ret
 
@@ -515,28 +540,22 @@ asm_sqrt448:                      # @asm_sqrt448
 .calc_adj:
 # Calculate Sqrt adjustment
 # inputs:
-# rbx:rbp:rax - src[2:0],   scaled by 2**(64*3-1-exp1)
-# rcx         - exp0 = 1-exp1
-# rdi:rsi     - rsqrt[1:0], scaled by 2**(64*2)
+# rbx:rbp:rax - src[2:0],   scaled by 2**(64*3-2)
+# rcx:rsi     - rsqrt[1:0], scaled by 2**(64*2)
 # rdx:r9:r8   - sqr[2:0],   scaled by 2**(64*3-2)
 # outputs:
 # rdx:r9:r8   - adj[2:0]
-# rcx         - exp0 = 1-exp1                   (preserved)
-# rdi:rsi     - rsqrt[1:0], scaled by 2**(64*2) (preserved)
+# rcx:rsi     - rsqrt[1:0], scaled by 2**(64*2) (preserved)
 # rbx         - sign(adj)
 # Other registers affected:
 # None
-  # left shift by exp0
-	shldq	%cl, %r9,  %rdx
-	shldq	%cl, %r8,  %r9
-  shl   %cl, %r8              # rdx:r9:r8 = rdx:r9:r8 << (1-exp1) = sqr[2:0] scaled by 2**(64*3-1-exp1)
-  # err = src[2:0] - sqr
+  # err = ssrc[2:0] - sqr
   sub   %r8,  %rax            # rax = err[0]
   sbb   %r9,  %rbp            # rbp = err[1]
   sbb   %rdx, %rbx            # rbx = err[2]
   # mul3sX2u - multiply signed 192-bit number err[2:0] by unsigned 128-bit number rsqrt[1:0]
   # start unsigned multiplication
-  mul   %rdi                  # rdx:rax = err[0]*rsqrt[1]
+  mul   %rcx                  # rdx:rax = err[0]*rsqrt[1]
   mov   %rdx, %r8             # r8  = adj[0] = (err[0]*rsqrt[1]).HI
   mov   %rbp, %rax            # rax = err[1]
   mul   %rsi                  # rdx:rax = err[1]*rsqrt[0]
@@ -545,7 +564,7 @@ asm_sqrt448:                      # @asm_sqrt448
   adc   %r9,  %r9             # r9  = adj[1] += carry
 
   mov   %rbp, %rax            # rax = err[1]
-  mul   %rdi                  # rdx:rax = err[1]*rsqrt[1]
+  mul   %rcx                  # rdx:rax = err[1]*rsqrt[1]
   add   %rax, %r8             # r8  = adj[0] += (err[1]*rsqrt[1]).LO
   adc   %rdx, %r9             # r9  = adj[1] += (err[1]*rsqrt[1]).HI + carry
   mov   %rbx, %rax            # rax = err[2]
@@ -555,7 +574,7 @@ asm_sqrt448:                      # @asm_sqrt448
   adc   %rdx, %rbp            # rbp = adj[1]' += (err[2]*rsqrt[0]).HI + carry
 
   mov   %rbx, %rax            # rax = err[2]
-  mul   %rdi                  # rdx:rax = err[2]*rsqrt[1]
+  mul   %rcx                  # rdx:rax = err[2]*rsqrt[1]
   add   %rax, %r9             # r9  = adj[1] += (err[2]*rsqrt[1]).LO
   adc   $0,   %rdx            # rdx = adj[2] =  (err[2]*rsqrt[1]).HI + carry
   add   %rbp, %r9             # r9  = adj[1] += adj[1]'
@@ -566,16 +585,11 @@ asm_sqrt448:                      # @asm_sqrt448
   sar   $63,  %rbx            # rbx = sign(adj) = (err[2] < 0) ? -1 : 0
   mov   %rsi, %rax
   and   %rbx, %rax            # rax = rsqrt[0] & sign(adj)
-  mov   %rdi, %rbp
+  mov   %rcx, %rbp
   and   %rbx, %rbp            # rbp = rsqrt[1] & sign(adj)
   sub   %rax, %r9             # r9  = adj[1] -= (rsqrt[0] & sign(adj))
   sbb   %rbp, %rdx            # rdx = adj[2] -= (rsqrt[0] & sign(adj)) - borrow
 
-  # rdx:r9:r8 = adj[2:0]
-  # arithmetic right shift by exp0
-  shrdq	%cl, %r9,  %r8
-  shrdq	%cl, %rdx, %r9
-  sar   %cl, %rdx
   # rdx:r9:r8 = adj[2:0], scaled by 2**(64*3-1)
   ret
 

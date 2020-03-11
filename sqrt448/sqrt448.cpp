@@ -124,26 +124,6 @@ static uintx_t muluuh(uint64_t a0, uint64_t a1, uint64_t b) {
 
 template<int N>
 static
-void lshift_0or1(uint64_t* __restrict buf, int sh)
-{
-  sh &= 1;
-  for (int i = N-1; i > 0; --i)
-    buf[i] = (buf[i] << sh) | ((buf[i-1] >> 63) & sh) ;
-  buf[0] = buf[0] << sh;
-}
-
-template<int N>
-static
-void rshift_0or1(uint64_t* __restrict buf, int sh)
-{
-  sh &= 1;
-  for (int i = 0; i < N-1; ++i)
-    buf[i] = (buf[i] >> sh) | ((buf[i+1] & sh) << 63);
-  buf[N-1] = int64_t(buf[N-1]) >> sh;
-}
-
-template<int N>
-static
 void addx(uint64_t* __restrict acc, uint64_t x)
 {
   uint64_t s = int64_t(x) < 0 ? uint64_t(-1) : 0;
@@ -210,26 +190,24 @@ static uint64_t rsqrt64(uint64_t x, int e)
 
 
 static
-void sub3w(uint64_t* __restrict dst, uint64_t a0, uint64_t a1, uint64_t a2,  const uint64_t b[3])
+void sub3w(uint64_t* __restrict dst, const uint64_t a[3],  const uint64_t b[3])
 {
-  uint64_t d0 = a0 - b[0];
-  uintx_t a21 = (uintx_t(a2)<<64) | a1;
+  uint64_t d0 = a[0] - b[0];
+  uintx_t a21 = (uintx_t(a[2])<<64) | a[1];
   uintx_t b21 = (uintx_t(b[2])<<64) | b[1];
-  uintx_t d21 = a21 - b21 - (a0 < b[0]);
+  uintx_t d21 = a21 - b21 - (a[0] < b[0]);
   dst[0] = d0;
   dst[1] = uint64_t(d21);
   dst[2] = uint64_t(d21 >> 64);
 }
 
 template <int N>
-void NR_step(uint64_t* __restrict Sqrt, uint64_t src0, uint64_t src1, uint64_t src2, int exp0, uint64_t Rsqrt0, uint64_t Rsqrt1)
+void NR_step(uint64_t* __restrict Sqrt, const uint64_t src[], uint64_t Rsqrt0, uint64_t Rsqrt1)
 { // improve precision of Sqrt from  128*N-eps bits to 128*(N+1)-eps bits
   uint64_t sqr[3];
-  sqrm3<N>(sqr, &Sqrt[2]);   // sqr(sqrt) scaled by 2**190
-  lshift_0or1<3>(sqr, exp0); // sqr(sqrt) scaled by 2**(191-exp1)
-  uint64_t err[3]; sub3w(err, src0, src1, src2, sqr);
+  sqrm3<N>(sqr, &Sqrt[2]);      // sqr(sqrt) scaled by 2**190
+  uint64_t err[3]; sub3w(err, src, sqr);
   uint64_t adj[3]; mul3sX2u(adj, err, Rsqrt0, Rsqrt1);
-  rshift_0or1<3>(adj, exp0); // adj scaled by 2**(191-exp1)
   Sqrt[0] = adj[0];
   Sqrt[1] = adj[1];
   addx<N*2>(&Sqrt[2], adj[2]);  // Sqrt += err*invS/2
@@ -238,15 +216,25 @@ void NR_step(uint64_t* __restrict Sqrt, uint64_t src0, uint64_t src1, uint64_t s
 
 static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
 {
+  uint64_t ssrc[8]; // source scaled by 2**(64*8-2)
+  if (exp1) {
+    ssrc[0] = 0;
+    memcpy(&ssrc[1], src, sizeof(src[0])*7);
+  } else {
+    ssrc[0] =  src[0] << 63;
+    for (int i = 1; i < 7; ++i)
+      ssrc[i] = (src[i] << 63) | (src[i-1] >> 1);
+    ssrc[7] = src[6] >> 1;
+  }
+  
   uint64_t Rsqrt1 = rsqrt64(src[6], exp1); // precision - 62 bits
   // Calculate sqrt() as src*invSqrt
   uint64_t Sqrt7 = (mulh(Rsqrt1, src[6]) << exp1) + 1; // scaled by 2**63
 
   // improve precision of Sqrt to 64*2-eps bits
-  int exp0 = exp1 ^ 1;
   uintx_t sqr = uintx_t(Sqrt7)*Sqrt7;
-  __int128 err = ((uintx_t(src[6]) << 64) | src[5]) - (sqr << exp0);
-  __int128 adj = mulsuh(err, Rsqrt1) >> exp0;
+  __int128 err = ((uintx_t(ssrc[7]) << 64) | ssrc[6]) - sqr;
+  __int128 adj = mulsuh(err, Rsqrt1);
    // Sqrt += err*invS/2
   uint64_t Sqrt6 = uint64_t(adj);
   Sqrt7 += uint64_t(uintx_t(adj)>>64);
@@ -260,9 +248,9 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
   uint64_t Sqrt[8];
   Sqrt[6] = Sqrt6;
   Sqrt[7] = Sqrt7;
-  NR_step<1>(&Sqrt[4], src[3], src[4], src[5], exp0, Rsqrt0, Rsqrt1); // improve precision to 64*4-eps bits
-  NR_step<2>(&Sqrt[2], src[1], src[2], src[3], exp0, Rsqrt0, Rsqrt1); // improve precision to 64*6-eps bits
-  NR_step<3>(&Sqrt[0], 0,      src[0], src[1], exp0, Rsqrt0, Rsqrt1); // improve precision to 64*8-eps bits
+  NR_step<1>(&Sqrt[4], &ssrc[4], Rsqrt0, Rsqrt1); // improve precision to 64*4-eps bits
+  NR_step<2>(&Sqrt[2], &ssrc[2], Rsqrt0, Rsqrt1); // improve precision to 64*6-eps bits
+  NR_step<3>(&Sqrt[0], &ssrc[0], Rsqrt0, Rsqrt1); // improve precision to 64*8-eps bits
   // Sqrt scaled by 2**511
 
   uint64_t lsw = Sqrt[0];
