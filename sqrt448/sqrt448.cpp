@@ -202,6 +202,7 @@ void sub3w(uint64_t* __restrict dst, const uint64_t a[3],  const uint64_t b[3])
 }
 
 template <int N>
+static
 void NR_step(uint64_t* __restrict Sqrt, const uint64_t src[], uint64_t Rsqrt0, uint64_t Rsqrt1)
 { // improve precision of Sqrt from  128*N-eps bits to 128*(N+1)-eps bits
   uint64_t sqr[3];
