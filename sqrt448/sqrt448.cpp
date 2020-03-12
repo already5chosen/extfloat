@@ -8,9 +8,11 @@ typedef unsigned __int128 uintx_t;
 // return three middle words of square of 2N-word source number
 // i.e. result = (a*a / 2**(64*(N-1)) % 2**192
 // for N > 1 the result is inexact. It can bit up to 4*N-4 smaller than exact value
-template<int N>
-static
-void sqrm3(uint64_t* __restrict dst, const uint64_t a[N])
+static inline
+#ifdef __clang__
+__attribute__((always_inline))
+#endif
+void sqrm3(uint64_t* __restrict dst, const uint64_t a[], int N)
 {
   // . b b A
   // . c b b
@@ -93,8 +95,9 @@ static __int128 mulsuh(const __int128 a, uint64_t b) {
 
 // mul3sX2u - multiply signed 192-bit number by unsigned 128-bit number.
 // write upper 192 bits of the product into destination buffer
-static void mul3sX2u(uint64_t* __restrict dst, const uint64_t a[3], uint64_t b0, uint64_t b1)
+static void mul3sX2u(uint64_t* __restrict dst, const uint64_t a[3], const uint64_t b[2])
 {
+  uint64_t b0 = b[0], b1 = b[1];
   // start with unsigned multiplication
   uintx_t sum10, sum21;
   sum10  = uint64_t(uintx_t(a[0])*b1 >> 64);
@@ -122,22 +125,30 @@ static uintx_t muluuh(uint64_t a0, uint64_t a1, uint64_t b) {
   return uintx_t(a1)*b + uint64_t((uintx_t(a0)*b) >> 64);
 }
 
-template<int N>
 static
-void addx(uint64_t* __restrict acc, uint64_t x)
+void incdecx(uint64_t* acc, int64_t incdec, int N)
 {
-  uint64_t s = int64_t(x) < 0 ? uint64_t(-1) : 0;
-  uintx_t sum = (uintx_t)acc[0] + x;
-  acc[0] = uint64_t(sum);
-  for (int i = 1; i < N; ++i) {
-    sum = (uintx_t(acc[i]) + s) + uint64_t(sum >> 64);
-    acc[i] = uint64_t(sum);
+  if (incdec < 0) {
+    // decrement
+    for (int i = 0; i < N; ++i) {
+      uint64_t oldval = acc[i];
+      acc[i] = oldval - 1;
+      if (oldval != 0)
+        break;
+    }
+  } else {
+    // increment
+    for (int i = 0; i < N; ++i) {
+      uint64_t newval = acc[i] + 1;
+      acc[i] = newval;
+      if (newval != 0)
+        break;
+    }
   }
 }
 
-template<int N>
 static
-void addw(uint64_t* __restrict dst, const uint64_t* src, uint64_t w)
+void addw(uint64_t* __restrict dst, const uint64_t* src, uint64_t w, int N)
 {
   uintx_t sum = (uintx_t)src[0] + w;
   dst[0] = uint64_t(sum);
@@ -201,19 +212,38 @@ void sub3w(uint64_t* __restrict dst, const uint64_t a[3],  const uint64_t b[3])
   dst[2] = uint64_t(d21 >> 64);
 }
 
-template <int N>
 static
-void NR_step(uint64_t* __restrict Sqrt, const uint64_t src[], uint64_t Rsqrt0, uint64_t Rsqrt1)
-{ // improve precision of Sqrt from  128*N-eps bits to 128*(N+1)-eps bits
-  uint64_t sqr[3];
-  sqrm3<N>(sqr, &Sqrt[2]);      // sqr(sqrt) scaled by 2**190
-  uint64_t err[3]; sub3w(err, src, sqr);
-  uint64_t adj[3]; mul3sX2u(adj, err, Rsqrt0, Rsqrt1);
+int64_t NR_step_common(
+  uint64_t* __restrict Sqrt,
+  const uint64_t       src[],
+  const uint64_t       Rsqrt[2],
+  uint64_t             sqr[3])
+{
+  uint64_t err[3];
+  sub3w(err, src, sqr);
+  uint64_t adj[3];
+  mul3sX2u(adj, err, Rsqrt);
+  // Sqrt += err*invS/2
   Sqrt[0] = adj[0];
   Sqrt[1] = adj[1];
-  addx<N*2>(&Sqrt[2], adj[2]);  // Sqrt += err*invS/2
+  __int128 res2 = __int128(int64_t(adj[2])) + Sqrt[2];
+  Sqrt[2] = uint64_t(uintx_t(res2));
+  return int64_t(res2 >> 64);
 }
 
+
+static inline
+#ifdef __clang__
+__attribute__((always_inline))
+#endif
+void NR_step(uint64_t* __restrict Sqrt, const uint64_t src[], const uint64_t Rsqrt[2], int N)
+{ // improve precision of Sqrt from  128*N-eps bits to 128*(N+1)-eps bits
+  uint64_t sqr[3];
+  sqrm3(sqr, &Sqrt[2], N);      // sqr(sqrt) scaled by 2**190
+  int64_t incdec = NR_step_common(Sqrt, src, Rsqrt, sqr);
+  if (incdec != 0)
+    incdecx(&Sqrt[3], incdec, N*2-1);
+}
 
 static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, int exp1)
 {
@@ -227,7 +257,7 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
       ssrc[i] = (src[i] << 63) | (src[i-1] >> 1);
     ssrc[7] = src[6] >> 1;
   }
-  
+
   uint64_t Rsqrt1 = rsqrt64(src[6], exp1); // precision - 62 bits
   // Calculate sqrt() as src*invSqrt
   uint64_t Sqrt7 = (mulh(Rsqrt1, src[6]) << exp1) + 1; // scaled by 2**63
@@ -249,9 +279,12 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
   uint64_t Sqrt[8];
   Sqrt[6] = Sqrt6;
   Sqrt[7] = Sqrt7;
-  NR_step<1>(&Sqrt[4], &ssrc[4], Rsqrt0, Rsqrt1); // improve precision to 64*4-eps bits
-  NR_step<2>(&Sqrt[2], &ssrc[2], Rsqrt0, Rsqrt1); // improve precision to 64*6-eps bits
-  NR_step<3>(&Sqrt[0], &ssrc[0], Rsqrt0, Rsqrt1); // improve precision to 64*8-eps bits
+  uint64_t Rsqrt[2];
+  Rsqrt[0] = Rsqrt0;
+  Rsqrt[1] = Rsqrt1;
+  NR_step(&Sqrt[4], &ssrc[4], Rsqrt, 1); // improve precision to 64*4-eps bits
+  NR_step(&Sqrt[2], &ssrc[2], Rsqrt, 2); // improve precision to 64*6-eps bits
+  NR_step(&Sqrt[0], &ssrc[0], Rsqrt, 3); // improve precision to 64*8-eps bits
   // Sqrt scaled by 2**511
 
   uint64_t lsw = Sqrt[0];
@@ -263,7 +296,7 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
     lsw = sqr_tip_point(&Sqrt[1]) << 1;
   }
   // rounding
-  addw<7>(dst, &Sqrt[1], lsw >> 63);
+  addw(dst, &Sqrt[1], lsw >> 63, 7);
 }
 
 cpp_bin_float_132 my_sqrt(const cpp_bin_float_132& x) {
