@@ -158,39 +158,37 @@ void addw(uint64_t* __restrict dst, const uint64_t* src, uint64_t w, int N)
   }
 }
 
-// rsqrt64 - calculate round(ldexp(1/sqrt(ldexp(quad_t(u), e-63)), 64))
-// x - input in range [2**63:2**64-1]
-// e - exponent in range [0:1]
-// result is calculated with precision better than +/-2
-// rsqrt64(2**63,0) => 2**64-1
-static uint64_t rsqrt64(uint64_t x, int e)
+// rsqrt64 - calculate round(ldexp(1/sqrt(ldexp(quad_t(u), -62)), 64))
+// x - input in range [2**62:2**64-1]
+// result is calculated with precision slightly better than +/-2
+// rsqrt64(2**62) => 2**64-1
+static uint64_t rsqrt64(uint64_t x)
 {
-  static const uint8_t rsqrt_tab[16] = {
-    252,  245,  238,  232,  226,  221,  216,  211,
-    207,  203,  199,  195,  192,  189,  185,  182,
+  static const uint8_t rsqrt_tab[48] = {
+    252, 245, 238, 232, 226, 221, 216, 211,
+    207, 203, 199, 195, 192, 189, 185, 182,
+    180, 177, 174, 172, 170, 167, 165, 163,
+    161, 159, 157, 155, 154, 152, 150, 149,
+    147, 146, 144, 143, 141, 140, 139, 137,
+    136, 135, 134, 133, 132, 131, 130, 129,
   };
-  int idx = (x >> 59) & 15;
-  uint64_t y = rsqrt_tab[idx];  // y scaled by 2^8
+  int idx = (x >> 58) & 63;
+  uint64_t y = rsqrt_tab[idx-16];  // y scaled by 2^8
 
   // 1st NR step - y = y*(3+eps - y*y*x)/2
   uint64_t yy  = y*y;                           // yy=y*y    scaled by 2^16
-  uint64_t yyx = yy*(x >> (64-15));             // yyx=y*y*x scaled by 2^(63+16+15-64)=2^30
+  uint64_t yyx = yy*(x >> (64-16));             // yyx=y*y*x scaled by 2^(62+16+16-64)=2^30
   y = (y * ((3u << 30)+(3u<<17)-yyx))>>(6+1);   // y         scaled by 2^(8+30-6)=2^32
 
   // 2nd NR step
   yy  = (y*y)>>32;                              // yy=y*y    scaled by 2^32
-  yyx = (yy*(x >> 32)) >> 33;                   // yyx=y*y*x scaled by 2^(32+63-32-33)=2^30
+  yyx = (yy*(x >> 32)) >> 32;                   // yyx=y*y*x scaled by 2^(32+62-32-32)=2^30
   y   = (y * ((3u << 30)+(3u<<4)-yyx))>>(30+1); // y         scaled by 2^(32+30-30)=2^32
-
-  // handle exponent
-  static const uint32_t exp_adj_tabb[2] = { uint32_t(-1), 3037000500u }; // 0xb504f333f9de6484
-  y = (y * exp_adj_tabb[e]) >> 32;
 
   // 3rd NR step
   // Use 2nd order polynomial: y =  y - y*(err/2 - 3/8*err**2) = y - y/2*(err - 3/4*err**2)
-  x = x*2;                                               // x= x - 1      scaled by 2**64
-  yy = (y * y) << e;
-  int64_t err = int64_t(mulh(yy, x)+yy);                 // err = y*y*x-1 scaled by 2**64
+  yy = y*y;                                              // y*y           scaled by 2**64
+  int64_t err = int64_t(uint64_t((uintx_t(yy)*x)>>62));  // err = y*y*x-1 scaled by 2**64
   uint64_t err2 = imulh(err, err);                       // err2 = err*err scaled by 2**64
   int64_t m2 = err2*3 - err*4;                           // m2 = 3*err**2 - err*4
   int64_t adj = imulh(m2, int64_t(uint64_t(y)<<29));     // adj = m2*(y/8)
@@ -258,9 +256,9 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
     ssrc[7] = src[6] >> 1;
   }
 
-  uint64_t Rsqrt1 = rsqrt64(src[6], exp1); // precision - 62 bits
+  uint64_t Rsqrt1 = rsqrt64(ssrc[7]); // precision - 62 bits
   // Calculate sqrt() as src*invSqrt
-  uint64_t Sqrt7 = (mulh(Rsqrt1, src[6]) << exp1) + 1; // scaled by 2**63
+  uint64_t Sqrt7 = mulh(Rsqrt1, ssrc[7])*2 + 2; // scaled by 2**63
 
   // improve precision of Sqrt to 64*2-eps bits
   uintx_t sqr = uintx_t(Sqrt7)*Sqrt7;
