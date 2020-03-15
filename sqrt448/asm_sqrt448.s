@@ -1,12 +1,10 @@
   .section	.rdata,"dr"
 	.p2align	4               # @_ZZL7rsqrt64yiE11exp_adj_tab
-_rsqrt64_tables:
-  # rsqrt_exp_adj_tab
-	.long	-1
-	.long	3037000500
-  # rsqrt_tab
-  .byte 252, 245,  238,  232,  226,  221,  216,  211
-  .byte 207, 203,  199,  195,  192,  189,  185,  182
+_rsqrt64_tab:
+  .byte 252, 178, 245, 173, 238, 168, 232, 164
+  .byte 226, 160, 221, 156, 216, 153, 211, 149
+  .byte 207, 146, 203, 143, 199, 141, 195, 138
+  .byte 192, 136, 189, 133, 185, 131, 182, 129
 	.addrsig
 
 	.text
@@ -46,97 +44,91 @@ asm_sqrt448:                      # @asm_sqrt448
 	.seh_endprologue
 
   # rcx = dst, rdx = src, r8d = exp1
-	movq	48(%rdx), %rax        # rax = src[6] = x
-  movq  %rdx, %r9             # r9  = src
-  movq  %rcx, 72(%rsp)        # save dst pointer at RCX home
-	movq	%rax, %rbx            # rbx = x
-	movq	%rax, %rsi            # rsi = x = src[6]
-	leaq	_rsqrt64_tables(%rip), %rdi
-	shr   $59, %rax
-	and   $15, %eax             # rax = idx = (x >> 59) & 15;
-	movzbl 8(%rax,%rdi), %eax   # rax = y = rsqrt_tab[idx]; y scaled by 2^8
+	movq	48(%rdx), %rax       # rax = src[6]
+  movq  %rcx, 72(%rsp)       # save dst pointer at RCX home
+	movq	%rax, %rbx           # rbx = src[6]
+	movq	%rax, %rsi           # rsi = src[6]
+	leaq	_rsqrt64_tab(%rip), %rdi
+	shr   $58, %rax
+	and   $30, %eax            # rax = idx = (x >> 58) & 30;
+  add   %r8d,%eax            # rax = idx = ((x >> 58) & 30) + exp1;
+	movzbl (%rax,%rdi), %eax   # rax = y = rsqrt_tab[idx]; y scaled by 2^8
+  mov   %r8d, %ecx           # rcx = exp1
+  xor   $1,   %ecx           # ecx = exp0 = exp1^1
+  shr  %cl,  %rbx            # rbx = x = ssrc[7] = src[6] >> exp0
 
   # 1st NR step - y = y*(3+eps1 - y*y*x)/2
-  mov  %eax, %edx             # rdx = y
+  mov  %eax, %r9d             # r9  = y
   imul %eax, %eax             # rax = yy = y*y;    scaled by 2^16
-  shr  $49,  %rbx             # rbx = x >> (64-15)
-  imul %ebx, %eax             # rax = yyx = yy*(x >> (64-15)) = y*y*x scaled by 2^(63+16+15-64)=2^30
+  mov  %rbx, %r8              # r8  = x
+	movq	  (%rdx), %rbp        # rbp = src[0]
+  shr  $48,  %rbx             # rbx = x >> (64-16)
+  imul %ebx, %eax             # rax = yyx = yy*(x >> (64-16)) = y*y*x scaled by 2^(62+16+16-64)=2^30
   NR1_3 = ((3)<<30)+((3)<<17);
   mov  $(NR1_3), %ebx
-  sub  %eax, %ebx
-  imul %rbx, %rdx
-  shr  $7,   %rdx             # rdx = y = (y * ((3u << 30)+(3u<<17)-yyx))>>(6+1); scaled by 2^(8+30-6)=2^32
+	movq	 8(%rdx), %rdi        # rdi = src[1]
+  sub  %eax, %ebx             # rbx = (3u << 30) + (3u<<17) - yyx
+  imul %rbx, %r9
+  shr  $7,   %r9              # r9  = y = (y * ((3u << 30)+(3u<<17)-yyx))>>(6+1); scaled by 2^(8+30-6)=2^32
+	movq	16(%rdx), %r10        # r10 = src[2]
 
   # 2nd NR step - y = y*(3+eps2 - y*y*x)/2
-  mov  %rdx, %rax             # rax = y
-  imul %rdx, %rdx             # rdx = yy=y*y       scaled by 2^64
-  mov  %rsi, %rbx
-  shr  $32,  %rdx             # rdx = yy=(y*y)>>32 scaled by 2^32
-  shr  $32,  %rbx             # rbx = x >> 32;     scaled by 2^31
-  imul %rbx, %rdx
-  shr  $33,  %rdx             # rdx = yyx = (yy*(x >> 32)) >> 33 = y*y*x scaled by 2^(32+63-32-33)=2^30
+  mov  %r9,  %rax             # rax = y
+  imul %r9,  %r9              # r9  = yy=y*y       scaled by 2^64
+  mov  %r8,  %rbx             # rbx = x
+	movq	24(%rdx), %r11        # r11 = src[3]
+  shr  $32,  %r9              # r9  = yy=(y*y)>>32 scaled by 2^32
+  shr  $32,  %r8              # r8  = x >> 32;     scaled by 2^30
+  imul %r8,  %r9
+	movq	32(%rdx), %r12        # r12 = src[4]
+  shr  $32,  %r9              # r9  = yyx = (yy*(x >> 32)) >> 33 = y*y*x scaled by 2^(32+62-32-32)=2^30
   NR2_3 = ((3)<<30)+((3)<<4);
-  mov  $(NR2_3), %ebx
-  sub  %edx, %ebx             # rbx = (3u << 30)+(3u<<4)-yyx
-  imul %rbx, %rax             # rax = y * ((3u << 30)+(3u<<4)-yyx)
-  mov  %r8d, %ecx             # rcx = exp1
+  mov  $(NR2_3), %r8d
+  sub  %r9d, %r8d             # r8  = (3u << 30)+(3u<<4)-yyx
+  imul %r8,  %rax             # rax = y = y * ((3u << 30)+(3u<<4)-yyx)
   shr  $31,  %rax             # rax = y = (y * ((3u << 30)+(3u<<4)-yyx))>>(30+1); scaled by 2^(32+30-30)=2^32
-
-  # handle exponent
-  mull (%rdi,%rcx,4)          # rdx = y = (y * exp_adj_tabb[exp1]) >> 32
+	movq	40(%rdx), %r13        # r13 = src[5]
 
   # 3rd NR step
   # Use 2nd order polynomial: y =  y - y*(err/2 - 3/8*err**2) = y - y/2*(err - 3/4*err**2)
-  mov  %rdx, %rbp             # rbp = y
-  imul %rdx, %rdx             # rdx = y*y
-  lea  (%rsi,%rsi ),%rax      # rax = x1 = x*2 = x - 1           scaled by 2**64
-  shl  %cl,  %rdx             # rdx = yy = (y * y) << exp1; scaled by 2**64
-  mov  %rdx, %rbx             # rbx = yy
-  mul  %rdx                   # rdx:rax = x1*yy
-  add  %rbx, %rdx             # rdx = err = int64_t(mulh(yy, x1)+yy) = y*y*x-1 scaled by 2**64
-  mov  %rdx, %rax             # rax = err
-  mov  %rdx, %rbx             # rbx = err
+  mov  %rax, %r8              # r8  = y
+  imul %rax, %rax             # rax = y*y, scaled by 2^64
+  mul  %rbx                   # rdx:rax - y*y*x, scaled by 2^(64+62)=2^126
+  shrd $62,  %rdx, %rax       # rax - err = y*y*x >> 62 = y*y*x-1 scaled by 2**64
+  mov  %rax, %r9              # r9  - err
   imul %rax                   # rdx = err2 = imulh(err, err) = err*err scaled by 2**64
   lea  (%rdx,%rdx,2),%rax     # rax = err2*3
-  shl  $2,   %rbx             # rbx = err*4
-  sub  %rbx, %rax             # rax = m2 = err2*3 - err*4 = 3*err**2 - err*4 scaled by 2**64
-  mov  %rbp, %rbx             # rbx = y
-  shl  $29,  %rbp             # rbp = y << 29
-  imul %rbp                   # rdx = adj = imulh(m2, int64_t(y<<29)) = m2*(y/8)
-  shl  $32,  %rbx             # rbx = y << 32
-  add  %rdx, %rbx             # rbx = Rsqrt[1] = (y<<32) + adj;
+  shl  $2,   %r9              # r9  = err*4
+  sub  %r9,  %rax             # rax = m2 = err2*3 - err*4 = 3*err**2 - err*4 scaled by 2**64
+  mov  %r8,  %r9              # r9  = y
+  shl  $29,  %r8              # r8  = y << 29
+  imul %r8                    # rdx = adj = imulh(m2, int64_t(y<<29)) = m2*(y/8)
+  shl  $32,  %r9              # r9  = y << 32
+  add  %rdx, %r9              # r9  = Rsqrt[1] = (y<<32) + adj;
 
   # Calculate sqrt() as src*invSqrt
-  movq  %rbx, %rax            # rax = Rsqrt[1]
-  mulq  %rsi                  # rdx = mulh(Rsqrt[1], src[6])
-  shl   %cl,  %rdx            # rdx = mulh(Rsqrt[1], src[6]) << expl
-  inc   %rdx                  # rdx = (mulh(Rsqrt[1], src[6]) << expl) + 1
-  xor   $1,   %ecx            # ecx = exp0 = exp1^1
+  movq  %r9,  %rax            # rax = Rsqrt[1]
+  mulq  %rbx                  # rdx = mulh(Rsqrt[1], ssrc[7])
+  lea   2(%rdx,%rdx),%rdx     # rdx = Sqrt[7] = mulh(Rsqrt[1], ssrc[7])*2 + 2
   movq  %rdx, %r15            # r15 = Sqrt[7]
 
   # Registers usage
   # rax - free
   # rdx - free (copy of Sqrt[7])
   # rcx - exp0 = exp1^1
-  # rbx - Rsqrt[1]
+  # rbx - ssrc[7]
   # rsi - src[6]
-  # rdi - free
-  # rbp - free
+  # rdi - src[1]
+  # rbp - src[0]
   # r8  - free
-  # r9  - src
-  # r10 - free
-  # r11 - free
-  # r12 - free
-  # r13 - free
+  # r9  - Rsqrt[1]
+  # r10 - src[2]
+  # r11 - src[3]
+  # r12 - src[4]
+  # r13 - src[5]
   # r14 - free
   # r15 - Sqrt[7]
 
-	movq	  (%r9), %rbp        # rbp = src[0]
-	movq	 8(%r9), %rdi        # rdi = src[1]
-	movq	16(%r9), %r10        # r10 = src[2]
-	movq	24(%r9), %r11        # r11 = src[3]
-	movq	32(%r9), %r12        # r12 = src[4]
-	movq	40(%r9), %r13        # r13 = src[5]
   xor   %eax, %eax           # rax = 0
 	shrdq	%cl, %rbp, %rax      # rax = ssrc[0] = ((src[0]:0) >> exp0).LO
 	shrdq	%cl, %rdi, %rbp      # rbp = ssrc[1] = ((src[1:0]) >> exp0).LO
@@ -145,7 +137,8 @@ asm_sqrt448:                      # @asm_sqrt448
 	shrdq	%cl, %r12, %r11      # r11 = ssrc[4] = ((src[4:3]) >> exp0).LO
 	shrdq	%cl, %r13, %r12      # r12 = ssrc[5] = ((src[5:4]) >> exp0).LO
 	shrdq	%cl, %rsi, %r13      # r13 = ssrc[6] = ((src[6:5]) >> exp0).LO
-  shr   %cl, %rsi            # rsi = ssrc[7] = src[6] >> exp0
+  mov   %rbx,%rsi            # rsi = ssrc[7] = src[6] >> exp0
+  mov   %r9, %rbx            # rbx = Rsqrt[1]
 
   mov  %rax, 80(%rsp)        # save ssrc[0] at RDX home
   mov  %rbp, 88(%rsp)        # save ssrc[1] at R8  home
@@ -159,7 +152,7 @@ asm_sqrt448:                      # @asm_sqrt448
   # rdi - ssrc[2]
   # rbp - free
   # r8  - free
-  # r9  - free
+  # r9  - free (copy of Rsqrt[1])
   # r10 - ssrc[3]
   # r11 - ssrc[4]
   # r12 - ssrc[5]
