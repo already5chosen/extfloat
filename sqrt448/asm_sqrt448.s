@@ -301,9 +301,9 @@ asm_sqrt448:                      # @asm_sqrt448
   # rdx:r9:r8   - adj[2:0]
   # rbx         - sign(adj)
   add   %rdx,%r12             # r12 = Sqrt[4] += adj[2]
-  adc   %rbx,%r13             # r13 = Sqrt[5] += sign(adj) + carry
-  adc   %rbx,%r14             # r14 = Sqrt[6] += sign(adj) + carry
-  adc   %rbx,%r15             # r15 = Sqrt[7] += sign(adj) + carry
+  adc   $0,  %rbx             # rbx = incdec = sign(adj) + carry
+  jnz   .incdec_sqrt_5to7
+  .incdec_sqrt_5to7_done:
   mov   %r8, %r10             # r10 = Sqrt[2]  = adj[0]
   mov   %r9, %r11             # r11 = Sqrt[3]  = adj[1]
 
@@ -387,14 +387,12 @@ asm_sqrt448:                      # @asm_sqrt448
   call .calc_adj
   # rdx:r9:r8   - adj[2:0]
   # rbx         - sign(adj)
-                              # r8  = Sqrt[0] += adj[0]
-                              # r9  = Sqrt[1] += adj[1]
+                              # r8  = Sqrt[0]  = adj[0]
+                              # r9  = Sqrt[1]  = adj[1]
   add   %rdx,%r10             # r10 = Sqrt[2] += adj[2]
-  adc   %rbx,%r11             # r11 = Sqrt[3] += sign(adj) + carry
-  adc   %rbx,%r12             # r12 = Sqrt[4] += sign(adj) + carry
-  adc   %rbx,%r13             # r13 = Sqrt[5] += sign(adj) + carry
-  adc   %rbx,%r14             # r14 = Sqrt[6] += sign(adj) + carry
-  adc   %rbx,%r15             # r15 = Sqrt[7] += sign(adj) + carry
+  adc   $0,  %rbx             # rbx = incdec = sign(adj) + carry
+  jnz   .incdec_sqrt_3to7
+  .incdec_sqrt_3to7_done:
 
   # Registers usage
   # rax - free
@@ -484,6 +482,7 @@ asm_sqrt448:                      # @asm_sqrt448
   add %r8, %r8                    # carry = bit 63 of lsw
   # add carry
   adc %rax, %r9
+  jnc .store_results
   adc %rax, %r10
   adc %rax, %r11
   adc %rax, %r12
@@ -491,6 +490,7 @@ asm_sqrt448:                      # @asm_sqrt448
   adc %rax, %r14
   adc %rax, %r15
   # store result at dst
+  .store_results:
   mov %r9,   0(%rcx)
   mov %r10,  8(%rcx)
   mov %r11, 16(%rcx)
@@ -585,6 +585,24 @@ asm_sqrt448:                      # @asm_sqrt448
 
   # rdx:r9:r8 = adj[2:0], scaled by 2**(64*3-1)
   ret
+
+  .incdec_sqrt_5to7:
+  mov %rbx, %rax             # rax - incdec
+  sar $1,   %rbx             # rbx - sign(incdec) = incdec < 0 ? -1 : 0
+  add %rax, %r13             # r11 = Sqrt[5] += incdec
+  adc %rbx, %r14             # r14 = Sqrt[6] += sign(incdec)+carry
+  adc %rbx, %r15             # r15 = Sqrt[7] += sign(incdec)+carry
+  jmp .incdec_sqrt_5to7_done
+
+  .incdec_sqrt_3to7:
+  mov %rbx, %rax             # rax - incdec
+  sar $1,   %rbx             # rbx - sign(incdec) = incdec < 0 ? -1 : 0
+  add %rax, %r11             # r11 = Sqrt[3] += incdec
+  adc %rbx, %r12             # r12 = Sqrt[4] += sign(incdec)+carry
+  adc %rbx, %r13             # r13 = Sqrt[5] += sign(incdec)+carry
+  adc %rbx, %r14             # r14 = Sqrt[6] += sign(incdec)+carry
+  adc %rbx, %r15             # r15 = Sqrt[7] += sign(incdec)+carry
+  jmp .incdec_sqrt_3to7_done
 
 	.seh_handlerdata
 	.text
