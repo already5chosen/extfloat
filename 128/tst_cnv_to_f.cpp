@@ -3,6 +3,7 @@
 #include <cmath>
 #include <random>
 #include <functional>           // for std::bind
+#include <intrin.h>
 #include <iostream>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 
@@ -358,7 +359,7 @@ static bool test_x(extfloat128_t a, int64_t n, float ares)
     if (dNext <= dCurr) {
       bool fail = true;
       if (dNext == dCurr) {
-        uint64_t u;
+        uint32_t u;
         memcpy(&u, &ares, sizeof(u));
         fail = (u & 1) != 0;
       }

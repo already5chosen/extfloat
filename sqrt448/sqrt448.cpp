@@ -93,30 +93,21 @@ static __int128 mulsuh(const __int128 a, uint64_t b) {
 }
 
 
-// mul3sX2u - multiply signed 192-bit number by unsigned 128-bit number.
-// write upper 192 bits of the product into destination buffer
-static void mul3sX2u(uint64_t* __restrict dst, const uint64_t a[3], const uint64_t b[2])
-{
+// mul2sX2u - multiply signed 128-bit number by unsigned 128-bit number.
+// return upper 128 bits of the product
+static uintx_t mul2sX2u(const uint64_t a[2], const uint64_t b[2])
+{ // start with unsigned multiplication
   uint64_t b0 = b[0], b1 = b[1];
-  // start with unsigned multiplication
-  uintx_t sum10, sum21;
-  sum10  = uint64_t(uintx_t(a[0])*b1 >> 64);
-  sum10 += uint64_t(uintx_t(a[1])*b0 >> 64);
-  sum10 += uintx_t(a[1])*b1;
-  sum21 = uint64_t(sum10 >> 64);
-  sum10 = uint64_t(sum10);
-  sum10 += uintx_t(a[2])*b0;
-  sum21 += uint64_t(sum10 >> 64);
-  sum21 += uintx_t(a[2])*b1;
+  uintx_t sum;
+  sum  = uint64_t(uintx_t(a[0])*b1 >> 64);
+  sum += uint64_t(uintx_t(a[1])*b0 >> 64);
+  sum += uintx_t(a[1])*b1;
   // unsigned multiplication done
 
-  uint64_t s = int64_t(a[2]) < 0 ? uint64_t(-1) : 0;
-  sum21 -= (uintx_t(b1 & s) << 64) | (b0 & s);
+  uint64_t s = int64_t(a[1]) < 0 ? uint64_t(-1) : 0;
+  sum -= (uintx_t(b1 & s) << 64) | (b0 & s);
   // result converted to signed
-
-  dst[0] = uint64_t(sum10);
-  dst[1] = uint64_t(sum21);
-  dst[2] = uint64_t(sum21 >> 64);
+  return sum;
 }
 
 // muluuh - multiply unsigned 128-bit number by unsigned 64-bit number.
@@ -210,35 +201,28 @@ void sub3w(uint64_t* __restrict dst, const uint64_t a[3],  const uint64_t b[3])
   dst[2] = uint64_t(d21 >> 64);
 }
 
-static
-int64_t NR_step_common(
-  uint64_t* __restrict Sqrt,
-  const uint64_t       src[],
-  const uint64_t       Rsqrt[2],
-  uint64_t             sqr[3])
-{
-  uint64_t err[3];
-  sub3w(err, src, sqr);
-  uint64_t adj[3];
-  mul3sX2u(adj, err, Rsqrt);
-  // Sqrt += err*invS/2
-  Sqrt[0] = adj[0];
-  Sqrt[1] = adj[1];
-  __int128 res2 = __int128(int64_t(adj[2])) + Sqrt[2];
-  Sqrt[2] = uint64_t(uintx_t(res2));
-  return int64_t(res2 >> 64);
-}
-
-
 static inline
 #ifdef __clang__
 __attribute__((always_inline))
 #endif
-void NR_step(uint64_t* __restrict Sqrt, const uint64_t src[], const uint64_t Rsqrt[2], int N)
+void NR_step(uint64_t* __restrict Sqrt, const uint64_t src[], const uint64_t Rsqrt[2], int N, int sh)
 { // improve precision of Sqrt from  128*N-eps bits to 128*(N+1)-eps bits
   uint64_t sqr[3];
   sqrm3(sqr, &Sqrt[2], N);      // sqr(sqrt) scaled by 2**190
-  int64_t incdec = NR_step_common(Sqrt, src, Rsqrt, sqr);
+  uint64_t err[3];
+  sub3w(err, src, sqr);
+  err[0] = (err[0] >> sh) | (err[1] << (64-sh));
+  err[1] = (err[1] >> sh) | (err[2] << (64-sh));
+  uintx_t adj = mul2sX2u(err, Rsqrt);
+  uint64_t adj0 = uint64_t(uint64_t(adj) << sh);
+  uint64_t adj1 = uint64_t(adj >> (64-sh));
+  int64_t  adj2 = int64_t(uint64_t(adj>>64)) >> (64-sh);
+  __int128 res2 = __int128(adj2) + Sqrt[2];
+  Sqrt[0] = adj0;
+  Sqrt[1] = adj1;
+  Sqrt[2] = uint64_t(uintx_t(res2));
+
+  int64_t incdec = int64_t(res2 >> 64);
   if (incdec != 0)
     incdecx(&Sqrt[3], incdec, N*2-1);
 }
@@ -280,14 +264,14 @@ static void sqrt448(uint64_t* __restrict dst, const uint64_t* __restrict src, in
   uint64_t Rsqrt[2];
   Rsqrt[0] = Rsqrt0;
   Rsqrt[1] = Rsqrt1;
-  NR_step(&Sqrt[4], &ssrc[4], Rsqrt, 1); // improve precision to 64*4-eps bits
-  NR_step(&Sqrt[2], &ssrc[2], Rsqrt, 2); // improve precision to 64*6-eps bits
-  NR_step(&Sqrt[0], &ssrc[0], Rsqrt, 3); // improve precision to 64*8-eps bits
+  NR_step(&Sqrt[4], &ssrc[4], Rsqrt, 1,  6); // improve precision to 64*4-eps bits
+  NR_step(&Sqrt[2], &ssrc[2], Rsqrt, 2, 10); // improve precision to 64*6-eps bits
+  NR_step(&Sqrt[0], &ssrc[0], Rsqrt, 3, 14); // improve precision to 64*8-eps bits
   // Sqrt scaled by 2**511
 
   uint64_t lsw = Sqrt[0];
   const uint64_t UINT64_MID = uint64_t(1) << 63;
-  const uint64_t MAX_ERR    = 1 << 16; // probably less, but it does not cost much to be on the safe side
+  const uint64_t MAX_ERR    = 1 << 17; // probably less, but it does not cost much to be on the safe side
   if (lsw - (UINT64_MID-MAX_ERR) < MAX_ERR*2) {
     // We are very close to tip point
     // square (res*2**64+2**63), take sqr[8]

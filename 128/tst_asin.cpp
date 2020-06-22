@@ -4,6 +4,7 @@
 #include <random>
 #include <functional>           // for std::bind
 #include <iostream>
+#include <intrin.h>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <boost/math/constants/constants.hpp>
 
@@ -352,7 +353,8 @@ static extfloat128_t make_random_quadfloat(
       break;
     default:
       // full range
-      dst.m_exponent = std::min(std::max(expLsw, extfloat128_t::min_biased_exponent), extfloat128_t::max_biased_exponent);
+      expLsw = std::max(expLsw, extfloat128_t::min_biased_exponent); // a separate statement is workaround for bug in gcc -O3
+      dst.m_exponent = std::min(expLsw, extfloat128_t::max_biased_exponent);
       break;
   }
 

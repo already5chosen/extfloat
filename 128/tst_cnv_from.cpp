@@ -3,6 +3,7 @@
 #include <cmath>
 #include <random>
 #include <functional>           // for std::bind
+#include <intrin.h>
 #include <iostream>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 

@@ -4,7 +4,7 @@ CP   = g++
 #CPPOPT = -std=c++11 -I"/c/Users/user/modular-boost"
 COPT = -O3 -Wall -mavx
 # COPT = -O3 -Wall
-CPPOPT = -std=c++11 -I"/c/data/download/boost_1_62_x"
+CPPOPT = -std=c++11
 
 .c.o:
 	${CC} -c ${COPT} $<

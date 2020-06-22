@@ -4,6 +4,7 @@
 #include <random>
 #include <functional>           // for std::bind
 #include <iostream>
+#include <intrin.h>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 
 #define USE_EXTFLOAT128_T_OSTREAM

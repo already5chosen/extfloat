@@ -4,6 +4,7 @@
 #include <random>
 #include <functional>           // for std::bind
 #include <iostream>
+#include <intrin.h>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <boost/math/constants/constants.hpp>
 
@@ -88,9 +89,10 @@ int main(int argz, char** argv)
   if (argz > 2) {
     if (argv[2][0] == 'u')
       uniformal = true;
-    else if (argv[2][0] == 'b')
+    else if (argv[2][0] == 'b') {
       testBoost = true;
       uniformal = true;
+    }
   }
 
   std::mt19937_64 rndGen;
