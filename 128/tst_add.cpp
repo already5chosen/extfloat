@@ -197,7 +197,10 @@ static bool report_mismatch(extfloat128_t a, extfloat128_t b, uint64_t n, int op
   print(ab,  "ab   ");
   print(abb, "abb  ");
   print(oab, "oab  ");
-  print(oab.convert_to<boost_quadfloat_t>(), "oabq ");
+  boost_quadfloat_t oabq = oab.convert_to<boost_quadfloat_t>();
+  print(oabq,"oabq ");
+  if (oabq==abb)
+    printf("I am right! boost is wrong.\n");
   // std::cout
     // << "isfinite(ab) = " << isfinite(ab) << "\n"
     // << "isnan(ab)    = " << isnan(ab) << "\n"
