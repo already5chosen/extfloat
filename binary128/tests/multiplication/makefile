@@ -1,6 +1,6 @@
 CC=gcc
 CPP=g++
-COPT=-Wall -O2 -march=native -I../c
+COPT=-Wall -O2 -march=native
 
 all: tmul tmul_man
 
