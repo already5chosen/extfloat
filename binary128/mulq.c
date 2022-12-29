@@ -40,8 +40,15 @@ unsigned __int128 f128_to_u128(__float128 f)
   #ifdef CLEVER_SSE_F128_TO_INTEGER
   __m128i v;
   memcpy(&v, &f, sizeof(v));
+  #ifdef  __SSE4_1__
   uint64_t lo = _mm_extract_epi64(v, 0);
   uint64_t hi = _mm_extract_epi64(v, 1);
+  #else
+  uint64_t lo, hi;
+  memcpy(&lo, &v, sizeof(lo));
+  v = _mm_unpackhi_epi64(v, v);
+  memcpy(&hi, &v, sizeof(hi));
+  #endif
   return ((unsigned __int128)hi << 64) | lo;
   #else
   unsigned __int128 u;
