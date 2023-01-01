@@ -103,10 +103,12 @@ static void addsubvq(__float128* dst, const __float128* src1, const __float128* 
   const uint64_t BIT_14     = (uint64_t)1  << 14;
   const uint64_t BIT_15     = (uint64_t)1  << 15;
   const uint64_t BIT_16     = (uint64_t)1  << 16;
+  const uint64_t BIT_47     = (uint64_t)1  << 47;
   const uint64_t BIT_48     = (uint64_t)1  << 48;
   const uint64_t BIT_63     = (uint64_t)1  << 63;
   const uint64_t MSK_15     = BIT_15 - 1;
   const uint64_t INF_MSW    = MSK_15 << 48;
+  const uint64_t QNAN_MSW   = INF_MSW | BIT_47;
 
   do {
     uint64_t xHi = get_f128_hi(src1);
@@ -133,7 +135,7 @@ static void addsubvq(__float128* dst, const __float128* src1, const __float128* 
       if ((xLo | xHi)==0)      { // x is Inf
         if (exp_y == 0x7FFF)   { // y is Inf. It can't be NaN, because abs(NaN) > abs(Inf)
           if (sub)
-            xLo = 1;             // Inf-Inf => NaN
+            xHiWord = QNAN_MSW;  // Inf-Inf => QNaN
         }
       } else {  // x is NaN
       }

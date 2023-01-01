@@ -94,12 +94,15 @@ void mulSq(__float128* dst, const __float128* src, __float128 factor, int srclen
   if (srclen <= 0)
     return;
 
+  const uint64_t BIT_47      = (uint64_t)1 << 47;
   const uint64_t BIT_48      = (uint64_t)1 << 48;
   const uint64_t BIT_63      = (uint64_t)1 << 63;
   const uint64_t SIGN_BIT    = BIT_63;
   const int      EXP_BIAS    = 0x3FFF;
   const int      EXP_NAN_INF = 0x7FFF;
   const uint64_t MSK_48      = BIT_48 - 1;
+  const uint64_t INF_MSW     = (uint64_t)EXP_NAN_INF << 48;
+  const uint64_t QNAN_MSW    = INF_MSW | BIT_47;
 
   // preprocess factor
   __uint128 u_x = f128_to_u128(factor);
@@ -123,7 +126,7 @@ void mulSq(__float128* dst, const __float128* src, __float128 factor, int srclen
         if (yBiasedExp == 0) {
           uint64_t yLo = get_f128_lo(src);
           if (((yHi<<16)|yLo) == 0) { // y is zero
-            resHi |= 1;               // inf*zero => NaN
+            resHi = QNAN_MSW;         // inf*zero => QNaN
           }
         } else if (yBiasedExp == EXP_NAN_INF) {
           uint64_t yLo = get_f128_lo(src);
@@ -153,7 +156,7 @@ void mulSq(__float128* dst, const __float128* src, __float128 factor, int srclen
             resHi = yHi;
             resLo = get_f128_lo(src);
             if (((resHi<<16)|resLo) == 0) { // y is Inf
-              resHi |= 1;                   // zero*inf => NaN
+              resHi = QNAN_MSW;             // zero*inf => QNaN
             }
           }
           set_f128(dst, resHi, resLo);

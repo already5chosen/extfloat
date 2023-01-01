@@ -128,10 +128,12 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   const uint64_t BIT_14     = (uint64_t)1  << 14;
   const uint64_t BIT_15     = (uint64_t)1  << 15;
   const uint64_t BIT_16     = (uint64_t)1  << 16;
+  const uint64_t BIT_47     = (uint64_t)1  << 47;
   const uint64_t BIT_48     = (uint64_t)1  << 48;
   const uint64_t BIT_63     = (uint64_t)1  << 63;
   const uint64_t MSK_15     = BIT_15 - 1;
   const uint64_t INF_MSW    = MSK_15 << 48;
+  const uint64_t QNAN_MSW   = INF_MSW | BIT_47;
 
   unsigned exp_x = (xHi >> 48) & 0x7FFF;
   unsigned exp_y = (yHi >> 48) & 0x7FFF;
@@ -148,7 +150,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
           xLo     = yLo;       // => *srcy
           xHiWord = yHiWord;
         } else if (sub)      { // y is Inf
-          xLo = 1;             // Inf-Inf => NaN
+          xHiWord = QNAN_MSW;  // Inf-Inf => QNaN
         }
       }
     } else {  // x is NaN

@@ -68,12 +68,15 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint64_t yHi = (uint64_t)(u_y >> 64);
   uint64_t yLo = (uint64_t)u_y;
 
+  const uint64_t BIT_47       = (uint64_t)1 << 47;
   const uint64_t BIT_48       = (uint64_t)1 << 48;
   const uint64_t BIT_63       = (uint64_t)1 << 63;
   const uint64_t SIGN_BIT     = BIT_63;
   const int      EXP_BIAS     = 0x3FFF;
   const int      EXP_NAN_INF  = 0x7FFF;
   const uint64_t MSK_48       = BIT_48 - 1;
+  const uint64_t INF_MSW      = (uint64_t)EXP_NAN_INF << 48;
+  const uint64_t QNAN_MSW     = INF_MSW | BIT_47;
 
   int xBiasedExp  = (xHi*2) >> 49;
   int yBiasedExp  = (yHi*2) >> 49;
@@ -94,7 +97,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
         return mk_f128(xHi, xLo); // return x
     }
     if (((xHi<<1)|xLo) == 0) {    // x is zero
-      return mk_f128(yHi|1, yLo); // return inf*zero => NaN
+      return mk_f128(QNAN_MSW, yLo); // return inf*zero => QNaN
     }
     xBiasedExp = yBiasedExp;      // cause overflow detection down the road
   }
