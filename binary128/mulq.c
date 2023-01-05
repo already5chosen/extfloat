@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <fenv.h>
 
 #ifdef __amd64
 #ifdef __WIN64
@@ -76,7 +77,9 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   const int      EXP_NAN_INF  = 0x7FFF;
   const uint64_t MSK_48       = BIT_48 - 1;
   const uint64_t INF_MSW      = (uint64_t)EXP_NAN_INF << 48;
-  const uint64_t QNAN_MSW     = INF_MSW | BIT_47;
+  const uint64_t QNAN_BIT     = BIT_47;
+  const uint64_t QNAN_MSW     = INF_MSW | QNAN_BIT;
+  const uint64_t SNAN_MSW     = INF_MSW;
 
   int xBiasedExp  = (xHi*2) >> 49;
   int yBiasedExp  = (yHi*2) >> 49;
@@ -88,13 +91,27 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   }
   if (__builtin_expect(yBiasedExp==EXP_NAN_INF,0)) {
     // y is NaN or Inf
-    if (((yHi<<16)|yLo) != 0) { // y is NaN
+    if (((yHi<<16)|yLo) != 0)  { // y is NaN
+      if ((yHi & QNAN_BIT)==0) { // y is SNaN
+        feraiseexcept(FE_INVALID); // raise invalid operand exception
+        yHi |= QNAN_BIT;         // turn y into QNaN
+      } else {                   // y is QNaN
+        if ((xHi & QNAN_MSW)==SNAN_MSW) { // x is SNaN or Inf
+          if (((xHi<<16)|xLo) != 0)       // x is SNaN
+            feraiseexcept(FE_INVALID);    // raise invalid operand exception
+        }
+      }
       return mk_f128(yHi, yLo); // return y
     }
     // y is inf
     if (xBiasedExp==EXP_NAN_INF) {
-      if (((xHi<<16)|xLo) != 0)   // x is NaN
+      if (((xHi<<16)|xLo) != 0)  { // x is NaN
+        if ((xHi & QNAN_BIT)==0) { // x is SNaN
+          feraiseexcept(FE_INVALID); // raise invalid operand exception
+          xHi |= QNAN_BIT;         // turn x into QNaN
+        }
         return mk_f128(xHi, xLo); // return x
+      }
     }
     if (((xHi<<1)|xLo) == 0) {    // x is zero
       return mk_f128(QNAN_MSW, yLo); // return inf*zero => QNaN

@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <fenv.h>
 #ifdef __SSE2__
 #include <x86intrin.h>
 #endif
@@ -133,27 +134,34 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   const uint64_t BIT_63     = (uint64_t)1  << 63;
   const uint64_t MSK_15     = BIT_15 - 1;
   const uint64_t INF_MSW    = MSK_15 << 48;
-  const uint64_t QNAN_MSW   = INF_MSW | BIT_47;
+  const uint64_t QNAN_BIT   = BIT_47;
+  const uint64_t QNAN_MSW   = INF_MSW | QNAN_BIT;
 
   unsigned exp_x = (xHi >> 48) & 0x7FFF;
   unsigned exp_y = (yHi >> 48) & 0x7FFF;
   uint64_t sub   = (xHi ^ yHi) & BIT_63;
   uint64_t sign_x = xHi & BIT_63;
   uint64_t xHiWord = xHi;
-  uint64_t yHiWord = yHi;
   xHi &= MANT_H_MSK;
   yHi &= MANT_H_MSK;
   if (__builtin_expect(exp_x == 0x7FFF, 0)) { // x is Inf or NaN
     if ((xLo | xHi)==0)      { // x is Inf
-      if (exp_y == 0x7FFF)   { // y is Inf or NaN
-        if (yHi | yLo)       { // y is NaN
-          xLo     = yLo;       // => *srcy
-          xHiWord = yHiWord;
-        } else if (sub)      { // y is Inf
+      if (exp_y == 0x7FFF)   { // y is Inf
+        if (sub)
           xHiWord = QNAN_MSW;  // Inf-Inf => QNaN
-        }
       }
     } else {  // x is NaN
+      if ((xHiWord & QNAN_BIT)==0) { // x is SNaN
+        feraiseexcept(FE_INVALID);   // raise invalid operand exception
+        xHiWord |= QNAN_BIT;         // turn x into QNaN
+      } else {                       // x is QNaN
+        if (exp_y == 0x7FFF) {       // y is Inf or NaN
+          if (yLo | yHi)     {       // y is NaN
+            if ((yHi & QNAN_BIT)==0) // y is SNaN
+              feraiseexcept(FE_INVALID);   // raise invalid operand exception
+          }
+        }
+      }
     }
     ADDQ_CORE_RETURN(ret, xHiWord, xLo);
   }
