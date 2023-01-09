@@ -11,8 +11,8 @@ ALL_RESULTS += tadd_man_libgcc
 
 all: $(ALL_RESULTS)
 
-addsubq.o:../../addsubq.c
-	$(CC) $(COPT) -c $<
+addsubq.o:../../addsubq_rm.c
+	$(CC) $(COPT) -c $< -o $@
 
 qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
 	$(CC) $(COPT) -c $<
