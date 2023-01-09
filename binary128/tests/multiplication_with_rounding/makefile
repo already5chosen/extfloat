@@ -9,8 +9,8 @@ ALL_RESULTS += tmul_man_libgcc
 
 all: $(ALL_RESULTS)
 
-mulq.o:../../mulq.c
-	$(CC) $(COPT) -c $<
+mulq.o:../../mulq_rm.c
+	$(CC) $(COPT) -c $< -o $@
 
 qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
 	$(CC) $(COPT) -c $<
