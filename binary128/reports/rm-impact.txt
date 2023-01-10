@@ -1,0 +1,45 @@
+Computers:
+EPY3-L - AMD EPYC-7543P, 3500 MHz, Debian Linux under WSL on WS-2019
+EPY3-W - AMD EPYC-7543P, 3600 MHz, Windows Server 2019
+SKLC-W - Intel Xeon E-2176G, 4250 MHz, Windows Server 2016
+HSWL-W - Intel Xeon E3-1271 v3, 4000 MHz, Windows Server 2008 R2
+IVYB-W - Intel Core i7-3770, ~3900 Mhz, Windows 7 Professional
+
+Compilers:
+Linux: gcc 10.2.1
+Windows: gcc 12.2
+
+Benchmark: Matrix multiplication, written in C using scalar add/mul primitives. 
+See ./tests/matmulq
+Windows tests run with default options
+Linux tests run with optin cn=17
+
+Description of primitives:
+ag - __addtf3 from libgcc
+mg - __multf3 from libgcc
+af - __addtf3 from ./addsubq.c. 
+ Supports Invalid Operand exception. 
+ Does not support Inexact exception. 
+ Does not support non-default rounding modes.
+mf - __multf3 from ./mulq.c. 
+ Supports Invalid Operand exception. 
+ Does not support Inexact exception. 
+ Does not support non-default rounding modes.
+ar - __addtf3 from ./addsubq_rm.c. 
+ Supports Invalid Operand exception. 
+ Does not support Inexact exception. 
+ Support non-default rounding modes by mean of reading current rounding mode
+ with standard 'C' library function fegetround() once per __addtf3() call.
+mr - __multf3 from ./mulq_rm.c. 
+ Supports Invalid Operand exception. 
+ Does not support Inexact exception. 
+ Support non-default rounding modes by mean of reading current rounding mode
+ with standard 'C' library function fegetround() once per __addtf3() call.
+
+Bencmark results (MFLOP/s):
+Computer: EPY3-L EPY3-W SKLC-W HSWL-W IVYB-W
+ag+mg     35.8    34.6   54.0   51.1    46.3
+af+mf    138.5   108.3  113.8  100.3    77.2
+ar+mf     80.9    91.3   92.8   79.7    67.3
+af+mr     80.0    81.9   90.6   80.1    64.8
+ar+mr     55.9    67.3   77.0   66.3    57.4
