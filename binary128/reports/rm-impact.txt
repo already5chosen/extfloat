@@ -43,3 +43,14 @@ af+mf    138.5   108.3  113.8  100.3    77.2
 ar+mf     80.9    91.3   92.8   79.7    67.3
 af+mr     80.0    81.9   90.6   80.1    64.8
 ar+mr     55.9    67.3   77.0   66.3    57.4
+
+The same with rounding mode read by Intel's _MM_GET_ROUNDING_MODE()
+instead of standard fegetround().
+
+Bencmark results (MFLOP/s):
+Computer: EPY3-L EPY3-W SKLC-W HSWL-W IVYB-W
+ag+mg     35.8    34.6   54.0   51.1    46.3
+af+mf    138.5   108.3  113.8  100.3    77.2
+ar+mf    126.8   101.3  109.8   99.9    78.0
+af+mr    132.9    89.6  108.5   97.4    77.6
+ar+mr     95.7    78.7  106.2   95.0    78.7

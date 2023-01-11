@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <fenv.h>
+#include "private/rounding_modes.h"
 
 #ifdef __amd64
 #ifdef __WIN64
@@ -181,15 +182,15 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
     resBiasedExp = EXP_NAN_INF; // Inf
   }
 
-  int rm = fegetround();
-  if (rm != FE_TONEAREST) {
+  int rm = fast_fegetround();
+  if (rm != fast_FE_TONEAREST) {
     if (xySign) {
-      if (rm == FE_DOWNWARD)
-        rm = FE_UPWARD;
-      else if (rm == FE_UPWARD)
-        rm = FE_DOWNWARD;
+      if (rm == fast_FE_DOWNWARD)
+        rm = fast_FE_UPWARD;
+      else if (rm == fast_FE_UPWARD)
+        rm = fast_FE_DOWNWARD;
     }
-    // At this point rm==FE_UPWARD means 'away from zero', rm==FE_DOWNWARD means 'toward zero'
+    // At this point rm==fast_FE_UPWARD means 'away from zero', rm==fast_FE_DOWNWARD means 'toward zero'
   }
 
   if (__builtin_expect(resBiasedExp < 0, 0)) {
@@ -197,7 +198,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
     unsigned rshift =  msbit - resBiasedExp;
     if (rshift >= 64) {
       if (rshift > 114) { // underflow
-        return mk_f128(xySign, rm==FE_UPWARD); // return zero or smallest subnormal
+        return mk_f128(xySign, rm==fast_FE_UPWARD); // return zero or smallest subnormal
       }
       xy0 |= xy1;
       xy1  = xy2;
@@ -216,8 +217,8 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   }
 
   uint64_t rnd_incr = (uint64_t)(msbit + 1) << 47;
-  if (rm != FE_TONEAREST) {
-    if (rm==FE_UPWARD) {
+  if (rm != fast_FE_TONEAREST) {
+    if (rm==fast_FE_UPWARD) {
       xy1 |= (xy0 != 0);
       rnd_incr = rnd_incr*2-1;
     } else {
@@ -236,7 +237,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint64_t resHi = (xy3 << lshift) | (xy2 >> (64-lshift));
   uint64_t resLo = (xy2 << lshift) | (xy1 >> (64-lshift));
   resHi += ((uint64_t)(unsigned)(resBiasedExp) << 48);
-  if (rm == FE_TONEAREST) {
+  if (rm == fast_FE_TONEAREST) {
     // test for tie
     uint64_t rnd_msk = rnd_incr * 2 - 1;
     if (__builtin_expect_with_probability((xy1 & rnd_msk)==0, 0, 1.0)) { // possibly a tie
@@ -244,7 +245,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
         resLo &= ~(uint64_t)1; // break tie to even
     }
   } else {
-    if (rm != FE_UPWARD) {
+    if (rm != fast_FE_UPWARD) {
       if (resHi == INF_MSW) { // Overflow
         // in case of rounding toward zero return maximal normal value
         resLo = (uint64_t)-1;

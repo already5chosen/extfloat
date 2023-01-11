@@ -4,6 +4,7 @@
 #ifdef __SSE2__
 #include <x86intrin.h>
 #endif
+#include "private/rounding_modes.h"
 
 #if defined(__amd64) && defined(__WIN64)
  #define X64_WINABI_QUIRCK 1
@@ -168,7 +169,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
 
   xHi |= BIT_48;          // add hidden mantissa bit
   yHi |= BIT_48;
-  int rm0 = fegetround();
+  int rm0 = fast_fegetround();
   if (__builtin_expect(exp_y == 0, 0)) { // y is subnormal or zero
     yHi &= MANT_H_MSK;    // remove hidden mantissa bit
     exp_y = 1;            // adjust exponent
@@ -180,7 +181,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
       if ((xHi | xLo)==0) { // x is Zero
         if (sub) {
           xHiWord = 0;      // sum of zeros with different signed => +zero
-          if (rm0 == FE_DOWNWARD) // except when rounding toward negative infinity
+          if (rm0 == fast_FE_DOWNWARD) // except when rounding toward negative infinity
             xHiWord = BIT_63; // result == -0
         }
       }
@@ -189,14 +190,14 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   }
 
   int rm = rm0;
-  if (rm != FE_TONEAREST) {
+  if (rm != fast_FE_TONEAREST) {
     if (sign_x) {
-      if (rm == FE_DOWNWARD)
-        rm = FE_UPWARD;
-      else if (rm == FE_UPWARD)
-        rm = FE_DOWNWARD;
+      if (rm == fast_FE_DOWNWARD)
+        rm = fast_FE_UPWARD;
+      else if (rm == fast_FE_UPWARD)
+        rm = fast_FE_DOWNWARD;
     }
-    // At this point rm==FE_UPWARD means 'away from zero', rm==FE_DOWNWARD means 'toward zero'
+    // At this point rm==fast_FE_UPWARD means 'away from zero', rm==fast_FE_DOWNWARD means 'toward zero'
   }
   // if (sub) y = - y; Implemented in almost branchless code
   sub = (int64_t)sub >> 63; // convert to all '1' or all '0'. This code is not portable by c rules, but guaranteed to work in gcc
@@ -220,7 +221,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
     // Normalize
     if (__builtin_expect(xHi == 0, 0)) { // MS word is fully canceled
       if (xLo == 0) { // full cancellation
-        if (rm0 == FE_DOWNWARD)
+        if (rm0 == fast_FE_DOWNWARD)
           xHi = BIT_63; // result == -0
         // otherwise result == +0
         ADDQ_CORE_RETURN(ret, xHi, xLo);
@@ -250,9 +251,9 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
         // This case expected to be the most common in real world
         unsigned rshift = 15 - lz; // rshift in range [0:15]
         uint64_t rnd_incr = ((uint64_t)(1) << rshift) >> 1;
-        if (rm != FE_TONEAREST) {
+        if (rm != fast_FE_TONEAREST) {
           if (rnd_incr) {
-            if (rm == FE_UPWARD)
+            if (rm == fast_FE_UPWARD)
               rnd_incr += rnd_incr - 1;
             else
               rnd_incr = 0;
@@ -264,7 +265,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
         resHi = xHi >> rshift;
         uint64_t rnd_msk = rnd_incr * 2 - 1;
         if (__builtin_expect_with_probability((xLo & rnd_msk)==0, 0, 1.0)) { // a tie
-          if (rm == FE_TONEAREST) {
+          if (rm == fast_FE_TONEAREST) {
             resLo &= ~(uint64_t)1; // break tie to even
           }
         }
@@ -292,8 +293,8 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
     yHi = (int64_t)yHi >> rshift;
     if (__builtin_expect((delta_exp >= 64),0)) {
       if (__builtin_expect((delta_exp > 114),1)) {
-        if (rm != FE_TONEAREST) {
-          if (rm == FE_UPWARD) {
+        if (rm != fast_FE_TONEAREST) {
+          if (rm == fast_FE_UPWARD) {
             // y = y < 0 ? 0 : 1
             yLo = (yHi >> 63) ^ 1;
             yHi = 0;
@@ -330,7 +331,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
 
     resHi &= ~BIT_63; // clear hidden bit
     // round to nearest
-    if (rm == FE_TONEAREST) {
+    if (rm == fast_FE_TONEAREST) {
       resLo += BIT_14;
       if (__builtin_expect(resLo < BIT_14,0))
         resHi += 1;
@@ -340,7 +341,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
         if (resG == 0)      // a tie, indeed
           resLo &= -BIT_16; // break tie to even
       }
-    } else if (rm == FE_UPWARD) {
+    } else if (rm == fast_FE_UPWARD) {
       if (resG != 0)
         resLo |= 1;
       resLo += BIT_15-1;
@@ -355,8 +356,8 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   if (__builtin_expect(resHi >= INF_MSW, 0)) { // overflow
     resHi = INF_MSW; // Inf
     resLo = 0;       // Inf
-    if (rm != FE_TONEAREST) {
-      if (rm != FE_UPWARD) {
+    if (rm != fast_FE_TONEAREST) {
+      if (rm != fast_FE_UPWARD) {
         resLo = (uint64_t)-1;
         resHi += resLo;
       }
