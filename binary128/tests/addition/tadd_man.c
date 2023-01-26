@@ -13,9 +13,19 @@ int main(int argz, char** argv)
   mpfr_t xa[2];
   mpfr_init2(xa[0], 113);
   mpfr_init2(xa[1], 113);
+  MPFR_DECL_INIT(flt128_nrm_min, 113);
 
-  for (int i = 0; i < 2 && i < argz-1; ++i)
+  mpfr_set_ui_2exp(flt128_nrm_min, 1, -16382, GMP_RNDN);
+  for (int i = 0; i < 2 && i < argz-1; ++i) {
     mpfr_strtofr(xa[i], argv[i+1], NULL, 0, GMP_RNDN);
+    if (mpfr_cmpabs(xa[i], flt128_nrm_min) < 0) {
+      int sign = mpfr_signbit(xa[i]);
+      mpfr_setsign(xa[i], xa[i], 0, GMP_RNDN);
+      mpfr_add(xa[i], xa[i], flt128_nrm_min, GMP_RNDN);
+      mpfr_sub(xa[i], xa[i], flt128_nrm_min, GMP_RNDN);
+      mpfr_setsign(xa[i], xa[i], sign, GMP_RNDN);
+    }
+  }
 
 
   MPFR_DECL_INIT(ref, 113);
