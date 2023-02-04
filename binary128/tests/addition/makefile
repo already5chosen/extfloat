@@ -2,28 +2,48 @@ CC=gcc
 CPP=g++
 COPT=-Wall -O2 -march=native
 
-all: tadd tsub tadd_man
+ALL_RESULTS := tadd
+ALL_RESULTS += tsub
+ALL_RESULTS += tadd_man
 
-addsubq.o:../../addsubq.c
-	$(CC) $(COPT) -c $<
+all: $(ALL_RESULTS)
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+# compilation
 
-tadd_man.o:tadd_man.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -I../util -c $<
+obj/addsubq.o:../../addsubq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tadd.o:tadd.cpp ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -c $< -o $@
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tsub.o:tadd.cpp ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -c $< -o $@ -DSUBTRACT
+obj/tadd_man.o:tadd_man.c
+	$(CC) $(COPT) -c -MD $< -o $@ -I../util
 
-tadd:tadd.o addsubq.o qmx2mpfr.o
+obj/tadd.o:tadd.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
+
+obj/tsub.o:tadd.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util -DSUBTRACT
+
+-include obj/addsubq.d
+-include obj/qmx2mpfr.d
+-include obj/tadd_man.d
+-include obj/tadd.d
+-include obj/tsub.d
+
+# link
+
+tadd:obj/tadd.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tsub:tsub.o addsubq.o qmx2mpfr.o
+tsub:obj/tsub.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tadd_man:tadd_man.o addsubq.o qmx2mpfr.o
+tadd_man:obj/tadd_man.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
+
+
+$(info $(shell mkdir -p obj))
+
+clean:
+	@rm -f obj/*

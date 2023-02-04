@@ -2,16 +2,33 @@ CC=gcc
 CPP=g++
 COPT=-Wall -O2 -march=native
 
-all: tmuls
+ALLEXE :=
+ALLEXE += tmuls
 
-mulsq.o:../../vector/mulsq.c ../../vector/mulsq.h
-	$(CC) $(COPT) -c $<
+all: ${ALLEXE}
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+# compilation
 
-tmuls.o:tmuls.cpp ../../vector/mulsq.h ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -I../../vector -c $<
+obj/mulsq.o:../../vector/mulsq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tmuls:tmuls.o mulsq.o qmx2mpfr.o
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
+
+obj/tmuls.o:tmuls.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util -I../../vector
+
+-include obj/mulsq.d
+-include obj/qmx2mpfr.d
+-include obj/tmuls.d
+
+# link
+
+tmuls:obj/tmuls.o obj/mulsq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
+
+
+$(info $(shell mkdir -p obj))
+
+clean:
+	@rm -f obj/*

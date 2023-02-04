@@ -15,51 +15,69 @@ ALLEXE += mm_speed_armr
 all: ${ALLEXE}
 
 
-mulq.o:../../mulq.c
-	$(CC) $(COPT) -c $< -o $@
+# compilation
 
-addsubq.o:../../addsubq.c
-	$(CC) $(COPT) -c $< -o $@
+obj/mulq.o:../../mulq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-
-mulq_rm.o:../../mulq_rm.c
-	$(CC) $(COPT) -c $< -o $@
-
-addsubq_rm.o:../../addsubq_rm.c
-	$(CC) $(COPT) -c $< -o $@
+obj/addsubq.o:../../addsubq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
 
-matmulq.o:../matmulq/matmulq.c ../matmulq/matmulq.h
-	$(CC) $(COPT) -c $< -o $@
+obj/mulq_rm.o:../../mulq_rm.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $< -o $@
-
-mm_speed.o:../matmulq/mm_speed.cpp ../matmulq/matmulq.h
-	$(CPP) $(COPT) -c $< -o $@
-
-mm_prec.o:../matmulq/mm_prec.cpp ../matmulq/matmulq.h ../util/qmx2mpfr.h
-	$(CPP) $(COPT)  -I../util -c $<
+obj/addsubq_rm.o:../../addsubq_rm.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
 
-mm_speed:mm_speed.o matmulq.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+obj/matmulq.o:../matmulq/matmulq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-mm_speed_afmf:mm_speed.o matmulq.o addsubq.o mulq.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-mm_speed_armf:mm_speed.o matmulq.o addsubq_rm.o mulq.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+obj/mm_speed.o:../matmulq/mm_speed.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@
 
-mm_speed_afmr:mm_speed.o matmulq.o addsubq.o mulq_rm.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+obj/mm_prec.o:../matmulq/mm_prec.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
 
-mm_speed_armr:mm_speed.o matmulq.o addsubq_rm.o mulq_rm.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+-include obj/mulq.d
+-include obj/addsubq.d
+-include obj/mulq_rm.d
+-include obj/addsubq_rm.d
+-include obj/matmulq.d
+-include obj/qmx2mpfr.d
+-include obj/mm_speed.d
+-include obj/mm_prec.d
+
+# link
+
+mm_speed:obj/mm_speed.o obj/matmulq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_speed_afmf:obj/mm_speed.o obj/matmulq.o obj/addsubq.o obj/mulq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_speed_armf:obj/mm_speed.o obj/matmulq.o obj/addsubq_rm.o obj/mulq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_speed_afmr:obj/mm_speed.o obj/matmulq.o obj/addsubq.o obj/mulq_rm.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_speed_armr:obj/mm_speed.o obj/matmulq.o obj/addsubq_rm.o obj/mulq_rm.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
 
 
-mm_prec:mm_prec.o qmx2mpfr.o matmulq.o
-	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=$@.map
+mm_prec:obj/mm_prec.o obj/qmx2mpfr.o obj/matmulq.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=./map/$@.map
 
-mm_prec_ma:mm_prec.o qmx2mpfr.o matmulq.o addsubq.o mulq.o
-	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=$@.map
+mm_prec_ma:obj/mm_prec.o obj/qmx2mpfr.o obj/matmulq.o obj/addsubq.o obj/mulq.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=./map/$@.map
+
+
+$(info $(shell mkdir -p obj map))
+
+clean:
+	@rm -f obj/*  map/*.map

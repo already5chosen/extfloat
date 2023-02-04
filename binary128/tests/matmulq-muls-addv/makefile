@@ -9,26 +9,43 @@ ALLEXE += mm_prec_ma
 
 all: ${ALLEXE}
 
-mulsq.o:../../vector/mulsq.c ../../vector/mulsq.h
-	$(CC) $(COPT) -c $<
+# compilation
 
-addsubvq.o:../../vector/addsubvq.c ../../vector/addsubvq.h
-	$(CC) $(COPT) -c $<
+obj/mulsq.o:../../vector/mulsq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-matmulq.o:matmulq.c ../matmulq/matmulq.h
-	$(CC) $(COPT) -I../matmulq -I../../vector -c $<
+obj/addsubvq.o:../../vector/addsubvq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+obj/matmulq.o:matmulq.c
+	$(CC) $(COPT) -c -MD $< -o $@ -I../matmulq -I../../vector
 
-mm_speed.o:../matmulq/mm_speed.cpp ../matmulq/matmulq.h
-	$(CPP) $(COPT) -c $<
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-mm_prec.o:../matmulq/mm_prec.cpp ../matmulq/matmulq.h ../util/qmx2mpfr.h
-	$(CPP) $(COPT)  -I../util -c $<
+obj/mm_speed.o:../matmulq/mm_speed.cpp
+	$(CC) $(COPT) -c -MD $< -o $@
 
-mm_speed_ma:mm_speed.o matmulq.o addsubvq.o mulsq.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+obj/mm_prec.o:../matmulq/mm_prec.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
 
-mm_prec_ma:mm_prec.o qmx2mpfr.o matmulq.o addsubvq.o mulsq.o
-	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=$@.map
+-include obj/mulsq.d
+-include obj/addsubvq.d
+-include obj/matmulq.d
+-include obj/qmx2mpfr.d
+-include obj/mm_speed.d
+-include obj/mm_prec.d
+
+# link
+
+mm_speed_ma:obj/mm_speed.o obj/matmulq.o obj/addsubvq.o obj/mulsq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_prec_ma:obj/mm_prec.o obj/qmx2mpfr.o obj/matmulq.o obj/addsubvq.o obj/mulsq.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=./map/$@.map
+
+
+$(info $(shell mkdir -p obj map))
+
+clean:
+	@rm -f obj/*  map/*.map

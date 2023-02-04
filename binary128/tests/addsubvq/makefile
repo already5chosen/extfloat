@@ -2,23 +2,40 @@ CC=gcc
 CPP=g++
 COPT=-Wall -O2 -march=native
 
-all: taddv tsubv
+ALL_RESULTS := taddv
+ALL_RESULTS += tsubv
 
-addsubvq.o:../../vector/addsubvq.c ../../vector/addsubvq.h
-	$(CC) $(COPT) -c $<
+all: $(ALL_RESULTS)
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+# compilation
 
-taddv.o:taddv.cpp ../../vector/addsubvq.h ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -I../../vector -c $< -o $@
+obj/addsubvq.o:../../vector/addsubvq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tsubv.o:taddv.cpp ../../vector/addsubvq.h ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -I../../vector -c $< -o $@ -DSUBTRACT
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-taddv:taddv.o addsubvq.o qmx2mpfr.o
+obj/taddv.o:taddv.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util -I../../vector
+
+obj/tsubv.o:taddv.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util -I../../vector -DSUBTRACT
+
+-include obj/addsubvq.d
+-include obj/qmx2mpfr.d
+-include obj/taddv.d
+-include obj/tsubv.d
+
+# link
+
+taddv:obj/taddv.o obj/addsubvq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tsubv:tsubv.o addsubvq.o qmx2mpfr.o
+tsubv:obj/tsubv.o obj/addsubvq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
+
+$(info $(shell mkdir -p obj))
+
+clean:
+	@rm -f obj/*

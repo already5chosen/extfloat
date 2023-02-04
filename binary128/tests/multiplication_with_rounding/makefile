@@ -9,31 +9,46 @@ ALL_RESULTS += tmul_man_libgcc
 
 all: $(ALL_RESULTS)
 
-mulq.o:../../mulq_rm.c
-	$(CC) $(COPT) -c $< -o $@
+# compilation
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+obj/mulq.o:../../mulq_rm.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-mulq_with_all_rounding_modes.o:mulq_with_all_rounding_modes.c
-	$(CC) $(COPT) -c $<
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tmul_man.o:tmul_man.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -I../util -c $<
+obj/mulq_with_all_rounding_modes.o:mulq_with_all_rounding_modes.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tmul.o:tmul.cpp ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -c $< -o $@
+obj/tmul_man.o:tmul_man.c
+	$(CC) $(COPT) -c -MD $< -o $@ -I../util
 
-tmul:tmul.o mulq_with_all_rounding_modes.o mulq.o qmx2mpfr.o
+obj/tmul.o:tmul.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
+
+-include obj/mulq.d
+-include obj/qmx2mpfr.d
+-include obj/mulq_with_all_rounding_modes.d
+-include obj/tmul_man.d
+-include obj/tmul.d
+
+# link
+
+tmul:obj/tmul.o obj/mulq_with_all_rounding_modes.o obj/mulq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tmul_man:tmul_man.o mulq_with_all_rounding_modes.o mulq.o qmx2mpfr.o
+tmul_man:obj/tmul_man.o obj/mulq_with_all_rounding_modes.o obj/mulq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
 
 
-
-tmul_libgcc:tmul.o mulq_with_all_rounding_modes.o qmx2mpfr.o
+tmul_libgcc:obj/tmul.o obj/mulq_with_all_rounding_modes.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tmul_man_libgcc:tmul_man.o mulq_with_all_rounding_modes.o qmx2mpfr.o
+tmul_man_libgcc:obj/tmul_man.o obj/mulq_with_all_rounding_modes.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
+
+
+$(info $(shell mkdir -p obj))
+
+clean:
+	@rm -f obj/*

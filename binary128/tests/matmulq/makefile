@@ -11,33 +11,49 @@ ALLEXE += mm_prec_ma
 
 all: ${ALLEXE}
 
+# compilation
 
-mulq.o:../../mulq.c
-	$(CC) $(COPT) -c $< -o $@
+obj/mulq.o:../../mulq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-addsubq.o:../../addsubq.c
-	$(CC) $(COPT) -c $<
+obj/addsubq.o:../../addsubq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-matmulq.o:matmulq.c matmulq.h
-	$(CC) $(COPT) -c $<
+obj/matmulq.o:matmulq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-mm_speed.o:mm_speed.cpp matmulq.h
-	$(CPP) $(COPT) -c $<
+obj/mm_speed.o:mm_speed.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@
 
-mm_prec.o:mm_prec.cpp matmulq.h ../util/qmx2mpfr.h
-	$(CPP) $(COPT)  -I../util -c $<
+obj/mm_prec.o:mm_prec.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
 
-mm_speed:mm_speed.o matmulq.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+-include obj/mulq.d
+-include obj/addsubq.d
+-include obj/matmulq.d
+-include obj/qmx2mpfr.d
+-include obj/mm_speed.d
+-include obj/mm_prec.d
 
-mm_speed_ma:mm_speed.o matmulq.o addsubq.o mulq.o
-	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=$@.map
+# link
 
-mm_prec:mm_prec.o qmx2mpfr.o matmulq.o
-	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=$@.map
+mm_speed:obj/mm_speed.o obj/matmulq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
 
-mm_prec_ma:mm_prec.o qmx2mpfr.o matmulq.o addsubq.o mulq.o
-	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=$@.map
+mm_speed_ma:obj/mm_speed.o obj/matmulq.o obj/addsubq.o obj/mulq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_prec:obj/mm_prec.o obj/qmx2mpfr.o obj/matmulq.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=./map/$@.map
+
+mm_prec_ma:obj/mm_prec.o obj/qmx2mpfr.o obj/matmulq.o obj/addsubq.o obj/mulq.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@ -Xlinker -Map=./map/$@.map
+
+
+$(info $(shell mkdir -p obj map))
+
+clean:
+	@rm -f obj/*  map/*.map

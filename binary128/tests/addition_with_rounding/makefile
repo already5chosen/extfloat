@@ -11,40 +11,56 @@ ALL_RESULTS += tadd_man_libgcc
 
 all: $(ALL_RESULTS)
 
-addsubq.o:../../addsubq_rm.c
-	$(CC) $(COPT) -c $< -o $@
+# compilation
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+obj/addsubq.o:../../addsubq_rm.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-addsubq_with_all_rounding_modes.o:addsubq_with_all_rounding_modes.c
-	$(CC) $(COPT) -c $<
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tadd_man.o:tadd_man.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -I../util -c $<
+obj/addsubq_with_all_rounding_modes.o:addsubq_with_all_rounding_modes.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tadd.o:tadd.cpp ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -c $< -o $@
+obj/tadd_man.o:tadd_man.c
+	$(CC) $(COPT) -c -MD $< -o $@ -I../util
 
-tsub.o:tadd.cpp ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -c $< -o $@ -DSUBTRACT
+obj/tadd.o:tadd.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
 
-tadd:tadd.o addsubq_with_all_rounding_modes.o addsubq.o qmx2mpfr.o
+obj/tsub.o:tadd.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util -DSUBTRACT
+
+-include obj/addsubq32.d
+-include obj/qmx2mpfr.d
+-include obj/tadd_man.d
+-include obj/tadd.d
+-include obj/tsub.d
+
+# link
+
+tadd:obj/tadd.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tsub:tsub.o addsubq_with_all_rounding_modes.o addsubq.o qmx2mpfr.o
+tsub:obj/tsub.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tadd_man:tadd_man.o addsubq_with_all_rounding_modes.o addsubq.o qmx2mpfr.o
+tadd_man:obj/tadd_man.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
 
 
 
-tadd_libgcc:tadd.o addsubq_with_all_rounding_modes.o qmx2mpfr.o
+tadd_libgcc:obj/tadd.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tsub_libgcc:tsub.o addsubq_with_all_rounding_modes.o qmx2mpfr.o
+tsub_libgcc:obj/tsub.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tadd_man_libgcc:tadd_man.o addsubq_with_all_rounding_modes.o qmx2mpfr.o
+tadd_man_libgcc:obj/tadd_man.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
+
+
+$(info $(shell mkdir -p obj))
+
+clean:
+	@rm -f obj/*

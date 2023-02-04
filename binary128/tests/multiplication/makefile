@@ -2,22 +2,40 @@ CC=gcc
 CPP=g++
 COPT=-Wall -O2 -march=native
 
-all: tmul tmul_man
+ALL_RESULTS := tmul
+ALL_RESULTS += tmul_man
 
-mulq.o:../../mulq.c
-	$(CC) $(COPT) -c $<
+all: $(ALL_RESULTS)
 
-qmx2mpfr.o:../util/qmx2mpfr.c ../util/qmx2mpfr.h
-	$(CC) $(COPT) -c $<
+# compilation
 
-tmul_man.o:tmul_man.c  ../util/qmx2mpfr.h
-	$(CC) $(COPT) -I../util -c $<
+obj/mulq.o:../../mulq.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tmul.o:tmul.cpp ../util/qmx2mpfr.h
-	$(CPP) $(COPT) -I../util -c $<
+obj/qmx2mpfr.o:../util/qmx2mpfr.c
+	$(CC) $(COPT) -c -MD $< -o $@
 
-tmul:tmul.o mulq.o qmx2mpfr.o
+obj/tmul_man.o:tmul_man.c
+	$(CC) $(COPT) -c -MD $< -o $@ -I../util
+
+obj/tmul.o:tmul.cpp
+	$(CPP) $(COPT) -c -MD $< -o $@ -I../util
+
+-include obj/mulq.d
+-include obj/qmx2mpfr.d
+-include obj/tmul_man.d
+-include obj/tmul.d
+
+# link
+
+tmul:obj/tmul.o obj/mulq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tmul_man:tmul_man.o mulq.o qmx2mpfr.o
+tmul_man:obj/tmul_man.o obj/mulq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
+
+
+$(info $(shell mkdir -p obj))
+
+clean:
+	@rm -f obj/*
