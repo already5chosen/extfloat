@@ -32,7 +32,7 @@ enum {
   fast_FE_TONEAREST   = FE_TONEAREST,
   fast_FE_DOWNWARD    = FE_DOWNWARD,
   fast_FE_UPWARD      = FE_UPWARD,
-  fast_FE_TOWARD_ZERO = FE_TOWARD_ZERO,
+  fast_FE_TOWARD_ZERO = FE_TOWARDZERO,
 };
 
 #endif
