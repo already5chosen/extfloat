@@ -19,6 +19,9 @@ obj/addsubq.o:../../addsubq_rm.c
 obj/qmx2mpfr.o:../util/qmx2mpfr.c
 	$(CC) $(COPT) -c -MD $< -o $@
 
+obj/mpfr_strtofr_clipped_to_float128.o:../util/mpfr_strtofr_clipped_to_float128.c
+	$(CC) $(COPT) -c -MD $< -o $@
+
 obj/addsubq_with_all_rounding_modes.o:addsubq_with_all_rounding_modes.c
 	$(CC) $(COPT) -c -MD $< -o $@
 
@@ -33,6 +36,7 @@ obj/tsub.o:tadd.cpp
 
 -include obj/addsubq32.d
 -include obj/qmx2mpfr.d
+-include obj/mpfr_strtofr_clipped_to_float128.d
 -include obj/tadd_man.d
 -include obj/tadd.d
 -include obj/tsub.d
@@ -45,7 +49,7 @@ tadd:obj/tadd.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr
 tsub:obj/tsub.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tadd_man:obj/tadd_man.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr.o
+tadd_man:obj/tadd_man.o obj/addsubq_with_all_rounding_modes.o obj/addsubq.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
 
 
@@ -56,7 +60,7 @@ tadd_libgcc:obj/tadd.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o
 tsub_libgcc:obj/tsub.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tadd_man_libgcc:obj/tadd_man.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o
+tadd_man_libgcc:obj/tadd_man.o obj/addsubq_with_all_rounding_modes.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
 
 

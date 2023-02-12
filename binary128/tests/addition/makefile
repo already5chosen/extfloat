@@ -16,6 +16,9 @@ obj/addsubq.o:../../addsubq.c
 obj/qmx2mpfr.o:../util/qmx2mpfr.c
 	$(CC) $(COPT) -c -MD $< -o $@
 
+obj/mpfr_strtofr_clipped_to_float128.o:../util/mpfr_strtofr_clipped_to_float128.c
+	$(CC) $(COPT) -c -MD $< -o $@
+
 obj/tadd_man.o:tadd_man.c
 	$(CC) $(COPT) -c -MD $< -o $@ -I../util
 
@@ -27,6 +30,7 @@ obj/tsub.o:tadd.cpp
 
 -include obj/addsubq.d
 -include obj/qmx2mpfr.d
+-include obj/mpfr_strtofr_clipped_to_float128.d
 -include obj/tadd_man.d
 -include obj/tadd.d
 -include obj/tsub.d
@@ -39,7 +43,7 @@ tadd:obj/tadd.o obj/addsubq.o obj/qmx2mpfr.o
 tsub:obj/tsub.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
-tadd_man:obj/tadd_man.o obj/addsubq.o obj/qmx2mpfr.o
+tadd_man:obj/tadd_man.o obj/addsubq.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
 
 

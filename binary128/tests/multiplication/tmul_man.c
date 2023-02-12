@@ -7,6 +7,7 @@
 #include <quadmath.h>
 
 #include "qmx2mpfr.h"
+#include "mpfr_strtofr_clipped_to_float128.h"
 
 int main(int argz, char** argv)
 {
@@ -15,7 +16,7 @@ int main(int argz, char** argv)
   mpfr_init2(xa[1], 113);
 
   for (int i = 0; i < 2 && i < argz-1; ++i)
-    mpfr_strtofr(xa[i], argv[i+1], NULL, 0, GMP_RNDN);
+    mpfr_strtofr_clipped_to_float128(xa[i], argv[i+1], NULL);
 
   __float128 x, y, res;
   mpfr_to_float128(&x, xa[0]);

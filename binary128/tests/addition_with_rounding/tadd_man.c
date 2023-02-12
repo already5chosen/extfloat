@@ -7,6 +7,7 @@
 #include <quadmath.h>
 
 #include "qmx2mpfr.h"
+#include "mpfr_strtofr_clipped_to_float128.h"
 
 void addq_all_rm(__float128 res[4], __float128 values[2]);
 
@@ -17,7 +18,7 @@ int main(int argz, char** argv)
   mpfr_init2(xa[1], 113);
 
   for (int i = 0; i < 2 && i < argz-1; ++i)
-    mpfr_strtofr(xa[i], argv[i+1], NULL, 0, GMP_RNDN);
+    mpfr_strtofr_clipped_to_float128(xa[i], argv[i+1], NULL);
 
   MPFR_DECL_INIT(ref,  113);
   MPFR_DECL_INIT(resx, 113);
