@@ -5,6 +5,7 @@ COPT=-Wall -O2 -march=native
 ALL_RESULTS := tadd
 ALL_RESULTS += tsub
 ALL_RESULTS += tadd_man
+ALL_RESULTS += tadd_man_gcclib
 
 all: $(ALL_RESULTS)
 
@@ -44,6 +45,9 @@ tsub:obj/tsub.o obj/addsubq.o obj/qmx2mpfr.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
 tadd_man:obj/tadd_man.o obj/addsubq.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
+
+tadd_man_gcclib:obj/tadd_man.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
 
 

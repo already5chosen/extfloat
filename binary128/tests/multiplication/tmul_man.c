@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <fenv.h>
 #include <mpfr.h>
 #include <quadmath.h>
 
@@ -46,12 +47,17 @@ int main(int argz, char** argv)
   mpfr_mul_d(res_subnormal_h, res_subnormal_h, 0.5, GMP_RNDN);
 
   MPFR_DECL_INIT(ref, 113);
-  mpfr_mul(ref, xa[0], xa[1], GMP_RNDN);
+  int ref_inexact = mpfr_mul(ref, xa[0], xa[1], GMP_RNDN);
+  int ref_ex = ref_inexact ? FE_INEXACT : 0;
   if (mpfr_regular_p(ref)) {
     int r_sign = mpfr_signbit(ref);
     if (mpfr_cmpabs(ref, res_max) > 0) {
       mpfr_set_inf(ref, r_sign ? -1 : 1);
-    } else if (mpfr_cmpabs(ref, res_nrm_min) < 0) {
+      ref_ex |= FE_OVERFLOW | FE_INEXACT;
+    } else if (mpfr_cmpabs(ref, res_nrm_min) <= 0) {
+      ref_ex |= FE_UNDERFLOW;
+      MPFR_DECL_INIT(ref_1st, 113);
+      mpfr_set(ref_1st, ref, GMP_RNDN);
       if (mpfr_cmpabs(ref, res_subnormal_h) <= 0) {
         mpfr_set_d(ref, r_sign ? -0.0 : 0.0, GMP_RNDN);
       } else { // subnormal
@@ -63,11 +69,15 @@ int main(int argz, char** argv)
           mpfr_sub(ref, ref, res_nrm_min, GMP_RNDN);
         }
       }
+      if (!mpfr_equal_p(ref, ref_1st))
+        ref_ex |= FE_INEXACT;
     }
   }
 
   memset(&res, 42, sizeof(res));
+  feclearexcept(FE_ALL_EXCEPT);
   res = x * y;
+  int res_ex = fetestexcept(FE_ALL_EXCEPT);
 
   MPFR_DECL_INIT(resx, 113);
   float128_to_mpfr(resx, &res);
@@ -85,12 +95,20 @@ int main(int argz, char** argv)
   memcpy(resu, &res, sizeof(resu));
   mpfr_printf(
    "res  %s %016llx:%016llx\n"
-   "resx %-+45.28Ra %+-54.40Re\n"
-   "ref  %-+45.28Ra %+-54.40Re\n"
+   "resx %-+45.28Ra %+-54.40Re%s%s%s%s\n"
+   "ref  %-+45.28Ra %+-54.40Re%s%s%s%s\n"
    "%s\n"
    , resbuf, resu[1], resu[0]
    , resx, resx
+   , res_ex & FE_INVALID   ? " Invalid"   : ""
+   , res_ex & FE_INEXACT   ? " Inexact"   : ""
+   , res_ex & FE_OVERFLOW  ? " Overflow"  : ""
+   , res_ex & FE_UNDERFLOW ? " Underflow" : ""
    , ref,  ref
+   , ref_ex & FE_INVALID   ? " Invalid"   : ""
+   , ref_ex & FE_INEXACT   ? " Inexact"   : ""
+   , ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+   , ref_ex & FE_UNDERFLOW ? " Underflow" : ""
    , succ ? "o.k." : "fail"
   );
 

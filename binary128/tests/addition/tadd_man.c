@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <fenv.h>
 #include <mpfr.h>
 #include <quadmath.h>
 
@@ -18,8 +19,18 @@ int main(int argz, char** argv)
   for (int i = 0; i < 2 && i < argz-1; ++i)
     mpfr_strtofr_clipped_to_float128(xa[i], argv[i+1], NULL);
 
+  MPFR_DECL_INIT(flt128_max, 113);
+  mpfr_set_ui_2exp(flt128_max, 1, 16384, GMP_RNDN);
   MPFR_DECL_INIT(ref, 113);
-  mpfr_add(ref, xa[0], xa[1], GMP_RNDN);
+  int ref_inexact = mpfr_add(ref, xa[0], xa[1], GMP_RNDN);
+  int ref_ex = ref_inexact ? FE_INEXACT : 0;
+  if (mpfr_regular_p(ref)) {
+    if (mpfr_cmpabs(ref, flt128_max) >= 0) { // Overflow
+      int sign = mpfr_signbit(ref);
+      mpfr_set_inf(ref, sign ? -1 : 1);
+      ref_ex |= FE_OVERFLOW | FE_INEXACT;
+    }
+  }
 
   __float128 x, y, res;
   mpfr_to_float128(&x, xa[0]);
@@ -35,7 +46,9 @@ int main(int argz, char** argv)
   );
   fflush(stdout);
 
+  feclearexcept(FE_ALL_EXCEPT);
   res = x + y;
+  int res_ex = fetestexcept(FE_ALL_EXCEPT);
 
   MPFR_DECL_INIT(resx, 113);
   float128_to_mpfr(resx, &res);
@@ -49,13 +62,21 @@ int main(int argz, char** argv)
   quadmath_snprintf(resbuf, sizeof(resbuf), "%+-.28Qa", res);
   mpfr_printf(
    "res  %-45s %016llx:%016llx\n"
-   "resx %-+45.28Ra %+-54.40Re\n"
-   "ref  %-+45.28Ra %+-54.40Re\n"
+   "resx %-+45.28Ra %+-54.40Re%s%s%s%s\n"
+   "ref  %-+45.28Ra %+-54.40Re%s%s%s%s\n"
    "%s\n"
    , resbuf
    , resu[1], resu[0]
    , resx, resx
+   , res_ex & FE_INVALID   ? " Invalid"   : ""
+   , res_ex & FE_INEXACT   ? " Inexact"   : ""
+   , res_ex & FE_OVERFLOW  ? " Overflow"  : ""
+   , res_ex & FE_UNDERFLOW ? " Underflow" : ""
    , ref,  ref
+   , ref_ex & FE_INVALID   ? " Invalid"   : ""
+   , ref_ex & FE_INEXACT   ? " Inexact"   : ""
+   , ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+   , ref_ex & FE_UNDERFLOW ? " Underflow" : ""
    , succ ? "o.k." : "fail"
   );
 
