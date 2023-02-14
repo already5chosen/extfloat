@@ -54,8 +54,7 @@ int main(int argz, char** argv)
     if (mpfr_cmpabs(ref, res_max) > 0) {
       mpfr_set_inf(ref, r_sign ? -1 : 1);
       ref_ex |= FE_OVERFLOW | FE_INEXACT;
-    } else if (mpfr_cmpabs(ref, res_nrm_min) <= 0) {
-      ref_ex |= FE_UNDERFLOW;
+    } else if (mpfr_cmpabs(ref, res_nrm_min) < 0) {
       MPFR_DECL_INIT(ref_1st, 113);
       mpfr_set(ref_1st, ref, GMP_RNDN);
       if (mpfr_cmpabs(ref, res_subnormal_h) <= 0) {
@@ -71,6 +70,10 @@ int main(int argz, char** argv)
       }
       if (!mpfr_equal_p(ref, ref_1st))
         ref_ex |= FE_INEXACT;
+      if (ref_ex & FE_INEXACT)
+        ref_ex |= FE_UNDERFLOW;
+      // Underflow detected after rounding as permitted by
+      // option (a) of IEEE Std 754-2008 paragraph 7.5
     }
   }
 
