@@ -279,10 +279,6 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   // normalize and round to nearest
   unsigned msbit = (xy7 >> 1);
   resBiasedExp += (int)msbit;
-  if (__builtin_expect(resBiasedExp >= EXP_NAN_INF-1, 0)) { // overflow
-    xy2 = xy3 = xy4 = xy5 = xy6 = xy7 = 0;
-    resBiasedExp = EXP_NAN_INF; // Inf
-  }
   if (__builtin_expect(resBiasedExp < 0, 0)) {
     // result is subnormal or underflow (zero)
     unsigned rshift =  msbit - resBiasedExp;
@@ -335,6 +331,11 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint32_t res1 = (xy5 << lshift) | (xy4 >> (32-lshift));
   uint32_t res0 = (xy4 << lshift) | (xy3 >> (32-lshift));
   res3 += ((uint32_t)(unsigned)(resBiasedExp) << 16);
+  if (__builtin_expect_with_probability(res3 >= INF_MSW, 0, 1.0)) { // Overflow
+    feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
+    res3 = INF_MSW;
+    res2 = res1 = res0 = 0;
+  }
   res3 |= xySign;
   uint32_t rnd_msk = rnd_incr * 2 - 1;
   if (__builtin_expect_with_probability((xy3 & rnd_msk)==0, 0, 1.0)) { // possibly a tie

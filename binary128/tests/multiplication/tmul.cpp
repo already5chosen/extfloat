@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <cfenv>
 #include <random>
 #include <thread>
 #include <mutex>
@@ -134,16 +135,19 @@ void test(long long it0, long long it1, test_context* context)
     float128_to_mpfr(xx, &x);
     float128_to_mpfr(yx, &y);
 
-    __float128 res;
-    res = x * y;
+    feclearexcept(FE_ALL_EXCEPT);
+    __float128 res = x * y;
+    int res_ex = fetestexcept(FE_ALL_EXCEPT);
     float128_to_mpfr(resx, &res);
 
     mpfr_mul(ref, xx, yx, GMP_RNDN);
+    int ref_ex = 0;
     if (mpfr_regular_p(ref)) {
       int r_sign = mpfr_signbit(ref);
       if (mpfr_cmpabs(ref, res_max) > 0) {
         mpfr_set_inf(ref, r_sign ? -1 : 1);
         ++nOverflow;
+        ref_ex |= FE_OVERFLOW | FE_INEXACT;
       } else if (mpfr_cmpabs(ref, res_nrm_min) < 0) {
         if (mpfr_cmpabs(ref, res_subnormal_h) <= 0) {
           mpfr_set_d(ref, r_sign ? -0.0 : 0.0, GMP_RNDN);
@@ -171,6 +175,8 @@ void test(long long it0, long long it1, test_context* context)
     }
 
     int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
+    if ((ref_ex ^ res_ex) & FE_OVERFLOW)
+      equal = 0;
     if (!equal) {
       if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
         context->sema.lock();
@@ -182,12 +188,14 @@ void test(long long it0, long long it1, test_context* context)
           mpfr_printf(
            "x    %-+45.28Ra %-50.36Re %s\n"
            "y    %-+45.28Ra %-50.36Re %s\n"
-           "res  %-+45.28Ra %-50.36Re %s\n"
-           "ref  %-+45.28Ra %-50.36Re\n"
+           "res  %-+45.28Ra %-50.36Re %s%s\n"
+           "ref  %-+45.28Ra %-50.36Re%s\n"
            ,xx,   xx, xbuf
            ,yx,   yx, ybuf
            ,resx, resx, rbuf
+           ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
            ,ref,  ref
+           ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
           );
           fflush(stdout);
         }

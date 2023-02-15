@@ -116,7 +116,10 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
     if (((xHi<<1)|xLo) == 0) {    // x is zero
       return mk_f128(QNAN_MSW, yLo); // return inf*zero => QNaN
     }
-    xBiasedExp = yBiasedExp;      // cause overflow detection down the road
+
+    // x is neither zero nor NaN
+    uint64_t msw = ((yHi^xHi) & SIGN_BIT) | INF_MSW;
+    return mk_f128(msw, yLo);       // return INF with combined sign
   }
 
   if (__builtin_expect(xBiasedExp==0,0)) {
@@ -172,10 +175,6 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   // normalize and round to nearest
   unsigned msbit = (xy3 >> 33);
   resBiasedExp += (int)msbit;
-  if (__builtin_expect(resBiasedExp >= EXP_NAN_INF-1, 0)) { // overflow
-    xy3 = xy2 = xy1 = 0;
-    resBiasedExp = EXP_NAN_INF; // Inf
-  }
   if (__builtin_expect(resBiasedExp < 0, 0)) {
     // result is subnormal or underflow (zero)
     unsigned rshift =  msbit - resBiasedExp;
@@ -212,6 +211,11 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint64_t resHi = (xy3 << lshift) | (xy2 >> (64-lshift));
   uint64_t resLo = (xy2 << lshift) | (xy1 >> (64-lshift));
   resHi += ((uint64_t)(unsigned)(resBiasedExp) << 48);
+  if (__builtin_expect_with_probability(resHi >= INF_MSW, 0, 1.0)) { // Overflow
+    feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
+    resHi = INF_MSW;
+    resLo = 0;
+  }
   resHi |= xySign;
   uint64_t rnd_msk = rnd_incr * 2 - 1;
   if (__builtin_expect_with_probability((xy1 & rnd_msk)==0, 0, 1.0)) { // possibly a tie
