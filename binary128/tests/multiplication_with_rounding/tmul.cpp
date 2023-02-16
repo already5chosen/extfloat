@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <cfenv>
 #include <random>
 #include <thread>
 #include <mutex>
@@ -13,7 +14,7 @@
 #include "qmx2mpfr.h"
 
 extern "C" {
-void mulq_all_rm(__float128 res[4], __float128 values[2]);
+void mulq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
 }
 
 struct test_context {
@@ -86,6 +87,7 @@ void test(long long it0, long long it1, test_context* context)
   MPFR_DECL_INIT(res_max, 113);
   MPFR_DECL_INIT(res_nrm_min, 113);
   MPFR_DECL_INIT(subnormal_adj, 113);
+  MPFR_DECL_INIT(ref_1st, 113);
 
   __float128 flt128_mx = FLT128_MAX;
   float128_to_mpfr(res_max, &flt128_mx);
@@ -135,8 +137,9 @@ void test(long long it0, long long it1, test_context* context)
     float128_to_mpfr(xx, &xy[0]);
     float128_to_mpfr(yx, &xy[1]);
 
+    int results_ex[4];
     __float128 results[4];
-    mulq_all_rm(results, xy);
+    mulq_all_rm(results, xy, results_ex);
 
     for (int mode_i = 0; mode_i < 4; ++mode_i) {
       static const struct {
@@ -150,7 +153,8 @@ void test(long long it0, long long it1, test_context* context)
       };
 
       mpfr_rnd_t mpfr_mode = rm_db[mode_i].mpfr_mode;
-      mpfr_mul(ref, xx, yx, mpfr_mode);
+      int ref_inexact = mpfr_mul(ref, xx, yx, mpfr_mode);
+      int ref_ex = ref_inexact ? FE_INEXACT : 0;
       if (mpfr_regular_p(ref)) {
         int r_sign = mpfr_signbit(ref);
         bool round_toward_zero =
@@ -162,8 +166,11 @@ void test(long long it0, long long it1, test_context* context)
             mpfr_setsign(ref, res_max, r_sign, MPFR_RNDN);
           else
             mpfr_set_inf(ref, r_sign ? -1 : 1);
+          ref_ex |= FE_OVERFLOW | FE_INEXACT;
           ++nOverflow;
         } else if (mpfr_cmpabs(ref, res_nrm_min) < 0) {
+          // subnormal or zero
+          mpfr_set(ref_1st, ref, GMP_RNDN);
           mpfr_setsign(subnormal_adj, res_nrm_min, r_sign, MPFR_RNDN);
           mpfr_fma(ref, xx, yx, subnormal_adj, mpfr_mode);
           mpfr_sub(ref, ref,    subnormal_adj, mpfr_mode);
@@ -173,6 +180,12 @@ void test(long long it0, long long it1, test_context* context)
           } else {
             ++nSubnormal;
           }
+          if (!mpfr_equal_p(ref, ref_1st))
+            ref_ex |= FE_INEXACT;
+          if (ref_ex & FE_INEXACT)
+            ref_ex |= FE_UNDERFLOW;
+          // Underflow detected after rounding as permitted by
+          // option (a) of IEEE Std 754-2008 paragraph 7.5
         } else {
           ++nNormal;
         }
@@ -187,6 +200,8 @@ void test(long long it0, long long it1, test_context* context)
 
       float128_to_mpfr(resx, &results[mode_i]);
       int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
+      if ((ref_ex ^ results_ex[mode_i]) & FE_OVERFLOW)
+        equal = 0;
       if (!equal) {
         if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
           context->sema.lock();
@@ -199,13 +214,15 @@ void test(long long it0, long long it1, test_context* context)
              "%s\n"
              "x    %-+45.28Ra %-50.36Re %s\n"
              "y    %-+45.28Ra %-50.36Re %s\n"
-             "res  %-+45.28Ra %-50.36Re %s\n"
-             "ref  %-+45.28Ra %-50.36Re\n"
+             "res  %-+45.28Ra %-50.36Re %s%s\n"
+             "ref  %-+45.28Ra %-50.36Re%s\n"
              ,rm_db[mode_i].str
              ,xx,   xx, xbuf
              ,yx,   yx, ybuf
              ,resx, resx, rbuf
+             ,results_ex[mode_i] & FE_OVERFLOW  ? " Overflow"  : ""
              ,ref,  ref
+             ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
             );
             fflush(stdout);
           }

@@ -290,11 +290,6 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   // normalize and round to nearest
   unsigned msbit = (xy7 >> 1);
   resBiasedExp += (int)msbit;
-  if (__builtin_expect(resBiasedExp >= EXP_NAN_INF-1, 0)) { // overflow
-    xy2 = xy3 = xy4 = xy5 = xy6 = xy7 = 0;
-    resBiasedExp = EXP_NAN_INF; // Inf
-  }
-
   int rm = fast_fegetround();
   if (rm != fast_FE_TONEAREST) {
     if (xySign) {
@@ -372,13 +367,16 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
       if (xy2 == 0)           // indeed, a tie
         res0 &= ~(uint32_t)1; // break tie to even
     }
-  } else {
-    if (rm != fast_FE_UPWARD) {
-      if (res3 == INF_MSW) { // Overflow
-        // in case of rounding toward zero return maximal normal value
-        res0 = res1 = res2 = (uint32_t)-1;
-        res3 += res0;
-      }
+  }
+
+  if (__builtin_expect_with_probability(res3 >= INF_MSW, 0, 1.0)) { // Overflow
+    feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
+    res3 = INF_MSW;
+    res0 = res1 = res2 = 0;
+    if (rm != fast_FE_TONEAREST && rm != fast_FE_UPWARD) {
+      // in case of rounding toward zero return maximal normal value
+      res0 = res1 = res2 = (uint32_t)-1;
+      res3 += res0;
     }
   }
   res3 |= xySign;

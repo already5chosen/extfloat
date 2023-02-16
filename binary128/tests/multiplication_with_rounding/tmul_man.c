@@ -3,13 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <fenv.h>
 #include <mpfr.h>
 #include <quadmath.h>
 
 #include "qmx2mpfr.h"
 #include "mpfr_strtofr_clipped_to_float128.h"
 
-void mulq_all_rm(__float128 res[4], __float128 values[2]);
+void mulq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
 
 int main(int argz, char** argv)
 {
@@ -46,7 +47,8 @@ int main(int argz, char** argv)
   MPFR_DECL_INIT(ref, 113);
   MPFR_DECL_INIT(resx, 113);
 
-  mulq_all_rm(results, xy);
+  int results_ex[4];
+  mulq_all_rm(results, xy, results_ex);
   int err = 0;
   for (int mode_i = 0; mode_i < 4; ++mode_i) {
     static const struct {
@@ -60,7 +62,8 @@ int main(int argz, char** argv)
     };
 
     mpfr_rnd_t mpfr_mode = rm_db[mode_i].mpfr_mode;
-    mpfr_mul(ref, xa[0], xa[1], mpfr_mode);
+    int ref_inexact = mpfr_mul(ref, xa[0], xa[1], mpfr_mode);
+    int ref_ex = ref_inexact ? FE_INEXACT : 0;
     if (mpfr_regular_p(ref)) {
       int r_sign = mpfr_signbit(ref);
       bool round_toward_zero =
@@ -72,11 +75,21 @@ int main(int argz, char** argv)
           mpfr_setsign(ref, res_max, r_sign, MPFR_RNDN);
         else
           mpfr_set_inf(ref, r_sign ? -1 : 1);
+        ref_ex |= FE_OVERFLOW | FE_INEXACT;
       } else if (mpfr_cmpabs(ref, res_nrm_min) < 0) {
+        // subnormal or zero
+        MPFR_DECL_INIT(ref_1st, 113);
+        mpfr_set(ref_1st, ref, GMP_RNDN);
         mpfr_setsign(subnormal_adjust, res_nrm_min, r_sign, MPFR_RNDN);
         mpfr_fma(ref, xa[0], xa[1], subnormal_adjust, mpfr_mode);
         mpfr_sub(ref, ref,          subnormal_adjust, mpfr_mode);
         mpfr_setsign(ref, ref, r_sign, MPFR_RNDN);
+        if (!mpfr_equal_p(ref, ref_1st))
+          ref_ex |= FE_INEXACT;
+        if (ref_ex & FE_INEXACT)
+          ref_ex |= FE_UNDERFLOW;
+        // Underflow detected after rounding as permitted by
+        // option (a) of IEEE Std 754-2008 paragraph 7.5
       }
     }
 
@@ -94,13 +107,21 @@ int main(int argz, char** argv)
     mpfr_printf(
      "%s\n"
      "res  %s %016llx:%016llx\n"
-     "resx %-+45.28Ra %+-54.40Re\n"
-     "ref  %-+45.28Ra %+-54.40Re\n"
+     "resx %-+45.28Ra %+-54.40Re%s%s%s%s\n"
+     "ref  %-+45.28Ra %+-54.40Re%s%s%s%s\n"
      "%s\n"
      , rm_db[mode_i].str
      , resbuf, resu[1], resu[0]
      , resx, resx
+     , results_ex[mode_i] & FE_INVALID   ? " Invalid"   : ""
+     , results_ex[mode_i] & FE_INEXACT   ? " Inexact"   : ""
+     , results_ex[mode_i] & FE_OVERFLOW  ? " Overflow"  : ""
+     , results_ex[mode_i] & FE_UNDERFLOW ? " Underflow" : ""
      , ref,  ref
+     , ref_ex & FE_INVALID   ? " Invalid"   : ""
+     , ref_ex & FE_INEXACT   ? " Inexact"   : ""
+     , ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+     , ref_ex & FE_UNDERFLOW ? " Underflow" : ""
      , succ ? "o.k." : "fail"
     );
 

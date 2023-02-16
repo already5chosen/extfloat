@@ -177,10 +177,6 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   // normalize and round to nearest
   unsigned msbit = (xy3 >> 33);
   resBiasedExp += (int)msbit;
-  if (__builtin_expect(resBiasedExp >= EXP_NAN_INF-1, 0)) { // overflow
-    xy3 = xy2 = xy1 = xy0 = 0;
-    resBiasedExp = EXP_NAN_INF; // Inf
-  }
 
   int rm = fast_fegetround();
   if (rm != fast_FE_TONEAREST) {
@@ -236,21 +232,23 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   int lshift = 16 - msbit;
   uint64_t resHi = (xy3 << lshift) | (xy2 >> (64-lshift));
   uint64_t resLo = (xy2 << lshift) | (xy1 >> (64-lshift));
-  resHi += ((uint64_t)(unsigned)(resBiasedExp) << 48);
   if (rm == fast_FE_TONEAREST) {
     // test for tie
     uint64_t rnd_msk = rnd_incr * 2 - 1;
     if (__builtin_expect_with_probability((xy1 & rnd_msk)==0, 0, 1.0)) { // possibly a tie
-      if (xy0 == 0)          // indeed, a tie
+      if (xy0 == 0)            // indeed, a tie
         resLo &= ~(uint64_t)1; // break tie to even
     }
-  } else {
-    if (rm != fast_FE_UPWARD) {
-      if (resHi == INF_MSW) { // Overflow
-        // in case of rounding toward zero return maximal normal value
-        resLo = (uint64_t)-1;
-        resHi += resLo;
-      }
+  }
+  resHi += ((uint64_t)(unsigned)(resBiasedExp) << 48);
+  if (__builtin_expect_with_probability(resHi >= INF_MSW, 0, 1.0)) { // Overflow
+    feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
+    resHi = INF_MSW;
+    resLo = 0;
+    if (rm != fast_FE_TONEAREST && rm != fast_FE_UPWARD) {
+      // in case of rounding toward zero return maximal normal value
+      resLo = (uint64_t)-1;
+      resHi += resLo;
     }
   }
   resHi |= xySign;
