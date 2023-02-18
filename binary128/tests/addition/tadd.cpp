@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <cfenv>
 #include <random>
 #include <thread>
 #include <mutex>
@@ -17,6 +18,7 @@ struct test_context {
   long long  nIter;
   long long  nMism;
   long long  nSamples;
+  long long  nOverflow;
 };
 
 static void make_subnormal_mantissa(uint64_t w[2], const uint64_t ra[2], int nbits)
@@ -98,6 +100,7 @@ void test(long long it0, long long it1, test_context* context)
   mpfr_mul_d(res_subnormal_h, res_subnormal_h, 0.5, GMP_RNDN);
 
   long long nSamples = 0;
+  long long nOverflow = 0;
   for (long long i = it0; i < it1; ++i) {
     const int RA_LEN = 1+2+2;
     uint64_t ra[RA_LEN];
@@ -128,30 +131,41 @@ void test(long long it0, long long it1, test_context* context)
         int de = ((min_exp - 10)/0x0800 - 1)*0x800;
         x = ldexpq(x, de);
         y = ldexpq(y, de);
+      } else if (r_class < 5) { // force result to be near overflow range
+        x = ldexpq(x, 0x7FFE - x_exp); // x in upper octave
+        int next_y_exp = (y_exp | (0x8000-128))-1;
+        y = ldexpq(y, next_y_exp-y_exp); // y in 128 upper octaves
       }
     }
 
     float128_to_mpfr(xx, &x);
     float128_to_mpfr(yx, &y);
 
-    __float128 res;
+    feclearexcept(FE_ALL_EXCEPT);
 #ifdef SUBTRACT
-  res = x - y;
-  mpfr_sub(ref, xx, yx, GMP_RNDN);
+    __float128 res = x - y;
+    int res_ex = fetestexcept(FE_ALL_EXCEPT);
+    int ref_inexact = mpfr_sub(ref, xx, yx, GMP_RNDN);
 #else
-  res = x + y;
-  mpfr_add(ref, xx, yx, GMP_RNDN);
+    __float128 res = x + y;
+    int res_ex = fetestexcept(FE_ALL_EXCEPT);
+    int ref_inexact = mpfr_add(ref, xx, yx, GMP_RNDN);
 #endif
 
-    float128_to_mpfr(resx, &res);
+    int ref_ex = ref_inexact ? FE_INEXACT : 0;
     if (mpfr_regular_p(ref)) {
       int r_sign = mpfr_signbit(ref);
       if (mpfr_cmpabs(ref, res_max) > 0) {
         mpfr_set_inf(ref, r_sign ? -1 : 1);
+        ref_ex |= FE_OVERFLOW | FE_INEXACT;
+        ++nOverflow;
       }
     }
 
+    float128_to_mpfr(resx, &res);
     int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
+    if ((ref_ex ^ res_ex) & FE_OVERFLOW)
+      equal = 0;
     if (!equal) {
       if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
         context->sema.lock();
@@ -163,12 +177,14 @@ void test(long long it0, long long it1, test_context* context)
           mpfr_printf(
            "x    %-+45.28Ra %-50.36Re %s\n"
            "y    %-+45.28Ra %-50.36Re %s\n"
-           "res  %-+45.28Ra %-50.36Re %s\n"
-           "ref  %-+45.28Ra %-50.36Re\n"
+           "res  %-+45.28Ra %-50.36Re %s%s\n"
+           "ref  %-+45.28Ra %-50.36Re%s\n"
            ,xx,   xx, xbuf
            ,yx,   yx, ybuf
            ,resx, resx, rbuf
+           ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
            ,ref,  ref
+           ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
           );
           fflush(stdout);
         }
@@ -180,6 +196,7 @@ void test(long long it0, long long it1, test_context* context)
   }
   context->sema.lock();
   context->nSamples += nSamples;
+  context->nOverflow += nOverflow;
   context->sema.unlock();
 }
 
@@ -196,6 +213,7 @@ int main(int argz, char** argv)
 
   tc.nMism = 0;
   tc.nSamples = 0;
+  tc.nOverflow  = 0;
   const int N_THREADS = 64;
   long long itPerThread = (tc.nIter-1)/N_THREADS + 1;
   std::thread tid[N_THREADS];
@@ -204,7 +222,7 @@ int main(int argz, char** argv)
   for (int i = 0; i < N_THREADS; ++i)
     tid[i].join();
 
-  printf("%lld iterations, %lld samples, %lld mismatches.\n", tc.nIter, tc.nSamples, tc.nMism);
+  printf("%lld iterations, %lld samples (%lld), %lld mismatches.\n", tc.nIter, tc.nSamples, tc.nOverflow, tc.nMism);
 
   return tc.nMism != 0;
 }

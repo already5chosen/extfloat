@@ -307,7 +307,8 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   }
   // combine sign+exponent+mantissa
   resHi += (uint64_t)exp_res << 48;
-  if (__builtin_expect(resHi >= INF_MSW, 0)) { // overflow
+  if (__builtin_expect_with_probability(resHi >= INF_MSW, 0, 1.0)) { // overflow
+    feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
     resHi = INF_MSW; // Inf
     resLo = 0;       // Inf
   }
