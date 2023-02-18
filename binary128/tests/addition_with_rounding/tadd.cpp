@@ -19,11 +19,12 @@ struct test_context {
   long long  nMism[4];
   long long  nMismTotal;
   long long  nSamples;
+  long long  nOverflow;
 };
 
 extern "C" {
-void addq_all_rm(__float128 res[4], __float128 values[2]);
-void subq_all_rm(__float128 res[4], __float128 values[2]);
+void addq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
+void subq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
 }
 
 static void make_subnormal_mantissa(uint64_t w[2], const uint64_t ra[2], int nbits)
@@ -105,6 +106,7 @@ void test(long long it0, long long it1, test_context* context)
   mpfr_mul_d(res_subnormal_h, res_subnormal_h, 0.5, GMP_RNDN);
 
   long long nSamples = 0;
+  long long nOverflow = 0;
   for (long long i = it0; i < it1; ++i) {
     const int RA_LEN = 1+2+2;
     uint64_t ra[RA_LEN];
@@ -135,6 +137,10 @@ void test(long long it0, long long it1, test_context* context)
         int de = ((min_exp - 10)/0x0800 - 1)*0x800;
         xy[0] = ldexpq(xy[0], de);
         xy[1] = ldexpq(xy[1], de);
+      } else if (r_class < 5) { // force result to be near overflow range
+        xy[0] = ldexpq(xy[0], 0x7FFE - x_exp); // x in upper octave
+        int next_y_exp = (y_exp | (0x8000-128))-1;
+        xy[1] = ldexpq(xy[1], next_y_exp-y_exp); // y in 128 upper octaves
       }
     }
 
@@ -142,10 +148,11 @@ void test(long long it0, long long it1, test_context* context)
     float128_to_mpfr(yx, &xy[1]);
 
     __float128 results[4];
+    int results_ex[4];
     #ifdef SUBTRACT
-    subq_all_rm(results, xy);
+    subq_all_rm(results, xy, results_ex);
     #else
-    addq_all_rm(results, xy);
+    addq_all_rm(results, xy, results_ex);
     #endif
 
     for (int mode_i = 0; mode_i < 4; ++mode_i) {
@@ -161,13 +168,14 @@ void test(long long it0, long long it1, test_context* context)
 
       mpfr_rnd_t mpfr_mode = rm_db[mode_i].mpfr_mode;
       #ifdef SUBTRACT
-      mpfr_sub(ref, xx, yx, mpfr_mode);
+      int ref_inexact = mpfr_sub(ref, xx, yx, mpfr_mode);
       #else
-      mpfr_add(ref, xx, yx, mpfr_mode);
+      int ref_inexact = mpfr_add(ref, xx, yx, mpfr_mode);
       #endif
 
       __float128 res = results[mode_i];
       float128_to_mpfr(resx, &res);
+      int ref_ex = ref_inexact ? FE_INEXACT : 0;
       if (mpfr_regular_p(ref)) {
         int r_sign = mpfr_signbit(ref);
         if (mpfr_cmpabs(ref, res_max) > 0) {
@@ -178,10 +186,15 @@ void test(long long it0, long long it1, test_context* context)
           } else {
             mpfr_set_inf(ref, r_sign ? -1 : 1);
           }
+          ref_ex |= FE_OVERFLOW | FE_INEXACT;
+          ++nOverflow;
         }
       }
 
       int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
+      int res_ex = results_ex[mode_i];
+      if ((ref_ex ^ res_ex) & FE_OVERFLOW)
+        equal = 0;
       if (!equal) {
         if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
           context->sema.lock();
@@ -194,13 +207,15 @@ void test(long long it0, long long it1, test_context* context)
              "%s\n"
              "x    %-+45.28Ra %-50.36Re %s\n"
              "y    %-+45.28Ra %-50.36Re %s\n"
-             "res  %-+45.28Ra %-50.36Re %s\n"
-             "ref  %-+45.28Ra %-50.36Re\n"
+             "res  %-+45.28Ra %-50.36Re %s%s\n"
+             "ref  %-+45.28Ra %-50.36Re%s\n"
              ,rm_db[mode_i].str
              ,xx,   xx, xbuf
              ,yx,   yx, ybuf
              ,resx, resx, rbuf
+             ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
              ,ref,  ref
+             ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
             );
             fflush(stdout);
           }
@@ -214,6 +229,7 @@ void test(long long it0, long long it1, test_context* context)
   }
   context->sema.lock();
   context->nSamples += nSamples;
+  context->nOverflow += nOverflow;
   context->sema.unlock();
 }
 
@@ -231,6 +247,7 @@ int main(int argz, char** argv)
   tc.nMismTotal = 0;
   tc.nSamples = 0;
   memset(tc.nMism, 0, sizeof(tc.nMism));
+  tc.nOverflow  = 0;
   const int N_THREADS = 64;
   long long itPerThread = (tc.nIter-1)/N_THREADS + 1;
   std::thread tid[N_THREADS];
@@ -239,9 +256,10 @@ int main(int argz, char** argv)
   for (int i = 0; i < N_THREADS; ++i)
     tid[i].join();
 
-  printf("%lld iterations, %lld samples, %lld (%lld+%lld+%lld+%lld) mismatches.\n"
+  printf("%lld iterations, %lld samples (%lld), %lld (%lld+%lld+%lld+%lld) mismatches.\n"
     , tc.nIter
     , tc.nSamples
+    , tc.nOverflow
     , tc.nMismTotal
     , tc.nMism[0], tc.nMism[1], tc.nMism[2], tc.nMism[3]);
 

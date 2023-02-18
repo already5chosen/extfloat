@@ -481,6 +481,7 @@ __float128 __addtf3(__float128 x, __float128 y)
   // combine sign+exponent+mantissa
   res3 += (uint32_t)exp_res << 16;
   if (__builtin_expect(res3 >= INF_MSW, 0)) { // overflow
+    feraiseexcept(FE_OVERFLOW | FE_INEXACT);   // raise Overflow+Inexact exception
     res3 = INF_MSW;         // Inf
     res2 = res1 = res0 = 0; // Inf
     if (rm != fast_FE_TONEAREST) {
