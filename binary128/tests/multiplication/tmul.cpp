@@ -70,6 +70,21 @@ static bool make_float128(__float128* dst, const uint64_t ra[2], int fp_class)
   return mundane;
 }
 
+void clear_ls_bits(__float128* x, int nbits)
+{
+  uint8_t bytes[sizeof(*x)];
+  memcpy(bytes, x, sizeof(*x));
+  #if (__FLOAT_WORD_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+  const int inv = 0;
+  #else
+  const int inv = sizeof(*x)-1;
+  #endif
+  for (int i = 0; i < nbits/8; ++i)
+    bytes[i ^ inv] = 0;
+  bytes[(nbits/8) ^ inv] &= (uint8_t)(255 << (nbits % 8));
+  memcpy(x, bytes, sizeof(*x));
+}
+
 void test(long long it0, long long it1, test_context* context)
 {
   // unsigned long long nIter = context->nIter;
@@ -82,6 +97,7 @@ void test(long long it0, long long it1, test_context* context)
   MPFR_DECL_INIT(res_max, 113);
   MPFR_DECL_INIT(res_nrm_min, 113);
   MPFR_DECL_INIT(res_subnormal_h, 113);
+  MPFR_DECL_INIT(ref_1st, 113);
 
   __float128 flt128_mx = FLT128_MAX;
   float128_to_mpfr(res_max, &flt128_mx);
@@ -111,12 +127,14 @@ void test(long long it0, long long it1, test_context* context)
     uint8_t  x_class = ra[0] >> (8*0);
     uint8_t  y_class = ra[0] >> (8*1);
     uint8_t  r_class = ra[0] >> (8*2);
+    uint8_t  r_prm_x = ra[0] >> (8*3);
+    uint8_t  r_prm_y = ra[0] >> (8*4);
 
     __float128 x, y;
     bool x_mundane = make_float128(&x, &ra[1], x_class);
     bool y_mundane = make_float128(&y, &ra[3], y_class);
     if (x_mundane && y_mundane) {
-      if (r_class == 0) { // force result to be near subnormal range
+      if (r_class < 2) { // force result to be near subnormal range
         int x_exp;
         frexpq(x, &x_exp);
         if (x_exp > -0x1000) {
@@ -129,6 +147,10 @@ void test(long long it0, long long it1, test_context* context)
         frexpq(y, &y_exp);
         int de = ((r_exp_max - x_exp - y_exp)/256 - 1)*256;
         y = ldexpq(y, de);
+        if (r_class == 0) { // reduce number of significant bits
+          clear_ls_bits(&x, (r_prm_x % 112) + 1);
+          clear_ls_bits(&y, (r_prm_y % 112) + 1);
+        }
       }
     }
 
@@ -140,8 +162,8 @@ void test(long long it0, long long it1, test_context* context)
     int res_ex = fetestexcept(FE_ALL_EXCEPT);
     float128_to_mpfr(resx, &res);
 
-    mpfr_mul(ref, xx, yx, GMP_RNDN);
-    int ref_ex = 0;
+    int ref_inexact = mpfr_mul(ref, xx, yx, GMP_RNDN);
+    int ref_ex = ref_inexact ? FE_INEXACT : 0;
     if (mpfr_regular_p(ref)) {
       int r_sign = mpfr_signbit(ref);
       if (mpfr_cmpabs(ref, res_max) > 0) {
@@ -152,7 +174,9 @@ void test(long long it0, long long it1, test_context* context)
         if (mpfr_cmpabs(ref, res_subnormal_h) <= 0) {
           mpfr_set_d(ref, r_sign ? -0.0 : 0.0, GMP_RNDN);
           ++nUnderflow;
+          ref_ex |= FE_INEXACT|FE_UNDERFLOW;
         } else { // subnormal
+          mpfr_set(ref_1st, ref, GMP_RNDN);
           if (r_sign) {
             mpfr_fms(ref, xx, yx, res_nrm_min, GMP_RNDN);
             mpfr_add(ref, ref, res_nrm_min, GMP_RNDN);
@@ -161,6 +185,12 @@ void test(long long it0, long long it1, test_context* context)
             mpfr_sub(ref, ref, res_nrm_min, GMP_RNDN);
           }
           ++nSubnormal;
+          if (ref_ex & FE_INEXACT)
+            ref_ex |= FE_UNDERFLOW;
+          else if (!mpfr_equal_p(ref, ref_1st))
+            ref_ex |= FE_INEXACT|FE_UNDERFLOW;
+          // Underflow detected after rounding as permitted by
+          // option (a) of IEEE Std 754-2008 paragraph 7.5
         }
       } else {
         ++nNormal;
@@ -175,7 +205,8 @@ void test(long long it0, long long it1, test_context* context)
     }
 
     int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
-    if ((ref_ex ^ res_ex) & FE_OVERFLOW)
+    if ((ref_ex ^ res_ex) & (FE_OVERFLOW|FE_UNDERFLOW))
+    // if ((ref_ex ^ res_ex) & (FE_OVERFLOW))
       equal = 0;
     if (!equal) {
       if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
@@ -188,14 +219,16 @@ void test(long long it0, long long it1, test_context* context)
           mpfr_printf(
            "x    %-+45.28Ra %-50.36Re %s\n"
            "y    %-+45.28Ra %-50.36Re %s\n"
-           "res  %-+45.28Ra %-50.36Re %s%s\n"
-           "ref  %-+45.28Ra %-50.36Re%s\n"
+           "res  %-+45.28Ra %-50.36Re %s%s%s\n"
+           "ref  %-+45.28Ra %-50.36Re%s%s\n"
            ,xx,   xx, xbuf
            ,yx,   yx, ybuf
            ,resx, resx, rbuf
            ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
+           ,res_ex & FE_UNDERFLOW ? " Underflow" : ""
            ,ref,  ref
            ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+           ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
           );
           fflush(stdout);
         }

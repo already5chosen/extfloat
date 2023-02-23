@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <fenv.h>
@@ -71,6 +72,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
 
   const uint64_t BIT_47       = (uint64_t)1 << 47;
   const uint64_t BIT_48       = (uint64_t)1 << 48;
+  const uint64_t BIT_62       = (uint64_t)1 << 62;
   const uint64_t BIT_63       = (uint64_t)1 << 63;
   const uint64_t SIGN_BIT     = BIT_63;
   const int      EXP_BIAS     = 0x3FFF;
@@ -80,6 +82,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   const uint64_t QNAN_BIT     = BIT_47;
   const uint64_t QNAN_MSW     = INF_MSW | QNAN_BIT;
   const uint64_t SNAN_MSW     = INF_MSW;
+  const uint64_t MIN_NORMAL_MSW = BIT_48;
 
   int xBiasedExp  = (xHi*2) >> 49;
   int yBiasedExp  = (yHi*2) >> 49;
@@ -128,14 +131,13 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
     { uint64_t tmp = xLo; xLo = yLo; yLo = tmp; }
     xBiasedExp = yBiasedExp; yBiasedExp = 0;
   }
+  uint64_t xySign = (xHi ^ yHi) & SIGN_BIT;
   if (__builtin_expect(yBiasedExp==0,0)) {
     // y is subnormal or zero
-    uint64_t ySign = yHi >> 63;
     yHi &= ~SIGN_BIT;
     if (yHi == 0) {
-      if (yLo == 0) {
-        yLo = (uint64_t)-1;
-        yBiasedExp = -(1 << 17);  // cause underflow detection down the road
+      if (yLo == 0) { // y is zero
+        return mk_f128(xySign, 0); // return zero with proper sign
       }
       do {
         yHi = yLo >> 16;
@@ -149,14 +151,18 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
       yLo = (yLo << lz);
       yBiasedExp -= lz-1;
     }
-    yHi |= ySign << 63;
-    // we do not care about the case when both x and y
-    // are subnormals or zero
-    // This case will be handled by exponent underflow
+
+    if (xBiasedExp + yBiasedExp < EXP_BIAS - 115) {
+      // Exponent underflow
+      xHi &= ~SIGN_BIT;
+      if ((xHi | xLo) != 0) { // x is not zero
+        feraiseexcept(FE_UNDERFLOW | FE_INEXACT); // raise Underflow+Inexact exception
+      }
+      return mk_f128(xySign, 0); // return zero with proper sign
+    }
   }
 
   int resBiasedExp = xBiasedExp + yBiasedExp - EXP_BIAS - 1;
-  uint64_t xySign = (xHi ^ yHi) & SIGN_BIT;
   xHi = (xHi & MSK_48) | BIT_48; // isolate mantissa and set hidden bit
   yHi = (yHi & MSK_48) | BIT_48;
 
@@ -175,29 +181,6 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   // normalize and round to nearest
   unsigned msbit = (xy3 >> 33);
   resBiasedExp += (int)msbit;
-  if (__builtin_expect(resBiasedExp < 0, 0)) {
-    // result is subnormal or underflow (zero)
-    unsigned rshift =  msbit - resBiasedExp;
-    if (rshift >= 64) {
-      if (rshift > 114) { // underflow
-        return mk_f128(xySign, 0); // return zero
-      }
-      xy0 |= xy1;
-      xy1  = xy2;
-      xy2  = xy3;
-      xy3  = 0;
-      rshift -= 64;
-    }
-    if (rshift > 0) {
-      xy0 =  xy0            | (xy1 << (64-rshift));
-      xy1 = (xy1 >> rshift) | (xy2 << (64-rshift));
-      xy2 = (xy2 >> rshift) | (xy3 << (64-rshift));
-      xy3 = (xy3 >> rshift);
-    }
-    resBiasedExp = 0;
-    msbit = 0;
-  }
-
   uint64_t rnd_incr = (uint64_t)(msbit + 1) << 47;
   xy1 += rnd_incr;
   if (__builtin_expect(xy1 < rnd_incr, 0)) { // carry out of xy1
@@ -211,10 +194,47 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint64_t resHi = (xy3 << lshift) | (xy2 >> (64-lshift));
   uint64_t resLo = (xy2 << lshift) | (xy1 >> (64-lshift));
   resHi += ((uint64_t)(unsigned)(resBiasedExp) << 48);
-  if (__builtin_expect_with_probability(resHi >= INF_MSW, 0, 1.0)) { // Overflow
-    feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
-    resHi = INF_MSW;
-    resLo = 0;
+  if (__builtin_expect_with_probability(resHi-MIN_NORMAL_MSW >= INF_MSW-MIN_NORMAL_MSW, 0, 1.0)) {
+    // exponent overflow or underflow
+    resHi -= MIN_NORMAL_MSW;
+    if (resHi >= BIT_63+BIT_62) { // result is subnormal or zero
+      unsigned rshift = (1<<16) - (unsigned)(resHi >> 48);
+      resHi = (resHi & MSK_48) | BIT_48;
+      // Undo "normal" rounding
+      if ((xy1 & rnd_incr)==0) {
+        if (resLo == 0)
+          resHi -= 1;
+        resLo -= 1;
+      }
+      uint64_t rnd_msk = rnd_incr * 2 - 1;
+      xy0 |= (xy1 - rnd_incr) & rnd_msk; // sticky bits
+
+      // de-normalize and round again
+      if (rshift >= 64) {
+        if (rshift > 114) { // underflow
+          feraiseexcept(FE_UNDERFLOW | FE_INEXACT); // raise Underflow+Inexact exception
+          return mk_f128(xySign, 0); // return zero
+        }
+        xy0  |= (resLo << 1);        // sticky bits
+        resLo = (resLo >> 63) | (resHi << 1);
+        resHi = (resHi >> 63);
+        rshift -= 63; // [64:114] => [1:51]
+      }
+      // rshift in [1:63]
+      rnd_incr = (uint64_t)1 << (rshift-1);
+      if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
+        resHi += 1;
+      xy1 = resLo;
+      resLo = (resLo >> rshift) | (resHi << (64-rshift));
+      resHi = (resHi >> rshift);
+      rnd_msk = rnd_incr * 2 - 1;
+      if (xy0 | ((xy1-rnd_incr) & rnd_msk))
+        feraiseexcept(FE_UNDERFLOW | FE_INEXACT); // raise Underflow+Inexact exception
+    } else { // Overflow
+      feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
+      resHi = INF_MSW;
+      resLo = 0;
+    }
   }
   resHi |= xySign;
   uint64_t rnd_msk = rnd_incr * 2 - 1;

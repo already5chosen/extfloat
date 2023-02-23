@@ -4,6 +4,7 @@ COPT=-Wall -O2 -march=native
 
 ALL_RESULTS := tmul
 ALL_RESULTS += tmul_man
+ALL_RESULTS += tmul_gcclib
 ALL_RESULTS += tmul_man_gcclib
 
 all: $(ALL_RESULTS)
@@ -38,6 +39,9 @@ tmul:obj/tmul.o obj/mulq.o obj/qmx2mpfr.o
 
 tmul_man:obj/tmul_man.o obj/mulq.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
+
+tmul_gcclib:obj/tmul.o obj/qmx2mpfr.o
+	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
 tmul_man_gcclib:obj/tmul_man.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -o $@
