@@ -12,6 +12,7 @@
 #include <mpfr.h>
 
 #include "qmx2mpfr.h"
+#include "mulq_test_generator.h"
 
 extern "C" {
 void mulq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
@@ -31,49 +32,6 @@ struct test_context {
   long long  nInf;
   long long  nNan;
 };
-
-static bool make_float128(__float128* dst, const uint64_t ra[2], int fp_class)
-{
-  const uint64_t BIT_63 = (uint64_t)1 << 63;
-  const uint64_t BIT_48 = (uint64_t)1 << 48;
-  const uint64_t MSK_48 = BIT_48 - 1;
-  const uint64_t MSK_15 = (uint64_t)(-1) >> (64-15);
-  uint64_t w[2]={0};
-  bool mundane = false;
-  if (fp_class >= 4) { // 252 out of 256 are fully random, so, mostly normal
-    w[0] = ra[0];
-    w[1] = ra[1];
-    uint64_t mh = ra[1] & MSK_48;
-    uint64_t s  = ra[1] & BIT_63;
-    uint64_t exp = (ra[1] >> 48) & MSK_15;
-    if (fp_class < 224) { // 220 out of 252 has reduced range to prevent over/under flow
-      exp = exp/2 + MSK_15/4;
-      mundane = true;
-    }
-    w[1] = s | (exp << 48) | mh;
-  } else {
-    if (fp_class == 0)        { // zero
-    } else if (fp_class == 1) { // subnormal
-      uint64_t exp = (ra[1] >> 48) & MSK_15;
-      int nbits = ((exp*112)>>15)+1;
-      if (nbits <= 64) {
-        w[0] = (ra[0] >> (64-nbits)) | (uint64_t(1) << (nbits-1));
-        w[1] = 0;
-      } else {
-        w[0] = ra[0];
-        w[1] = (ra[1] >> (128-nbits)) | (uint64_t(1) << (nbits-65));
-      }
-    } else if (fp_class == 3) { // infinity
-      w[1] = uint64_t(MSK_15) << 48;
-    } else                    { // NaN
-      w[0] = ra[0];
-      w[1] = (uint64_t(MSK_15) << 48) | (ra[1] >> 48);
-    }
-    w[1] |= (ra[1] & BIT_63); // copy sign
-  }
-  memcpy(dst, w, sizeof(*dst));
-  return mundane;
-}
 
 void test(long long it0, long long it1, test_context* context)
 {
@@ -110,29 +68,8 @@ void test(long long it0, long long it1, test_context* context)
     for (int k = 0; k < RA_LEN; ++k)
       ra[k] = rndGen();
 
-    uint8_t  x_class = ra[0] >> (8*0);
-    uint8_t  y_class = ra[0] >> (8*1);
-    uint8_t  r_class = ra[0] >> (8*2);
-
     __float128 xy[2];
-    bool x_mundane = make_float128(&xy[0], &ra[1], x_class);
-    bool y_mundane = make_float128(&xy[1], &ra[3], y_class);
-    if (x_mundane && y_mundane) {
-      if (r_class == 0) { // force result to be near subnormal range
-        int x_exp;
-        frexpq(xy[0], &x_exp);
-        if (x_exp > -0x1000) {
-          int de = ((-0x1000 - x_exp)/0x0800 - 1)*0x800;
-          xy[0] = ldexpq(xy[0], de);
-          x_exp += de;
-        }
-        const int r_exp_max = -0x4000 + 10;
-        int y_exp;
-        frexpq(xy[1], &y_exp);
-        int de = ((r_exp_max - x_exp - y_exp)/256 - 1)*256;
-        xy[1] = ldexpq(xy[1], de);
-      }
-    }
+    make_test_values_for_mulq(xy, ra);
 
     float128_to_mpfr(xx, &xy[0]);
     float128_to_mpfr(yx, &xy[1]);

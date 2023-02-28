@@ -12,6 +12,7 @@
 #include <mpfr.h>
 
 #include "qmx2mpfr.h"
+#include "mulq_test_generator.h"
 
 struct test_context {
   std::mutex sema;
@@ -26,64 +27,6 @@ struct test_context {
   long long  nInf;
   long long  nNan;
 };
-
-static bool make_float128(__float128* dst, const uint64_t ra[2], int fp_class)
-{
-  const uint64_t BIT_63 = (uint64_t)1 << 63;
-  const uint64_t BIT_48 = (uint64_t)1 << 48;
-  const uint64_t MSK_48 = BIT_48 - 1;
-  const uint64_t MSK_15 = (uint64_t)(-1) >> (64-15);
-  uint64_t w[2]={0};
-  bool mundane = false;
-  if (fp_class >= 4) { // 252 out of 256 are fully random, so, mostly normal
-    w[0] = ra[0];
-    w[1] = ra[1];
-    uint64_t mh = ra[1] & MSK_48;
-    uint64_t s  = ra[1] & BIT_63;
-    uint64_t exp = (ra[1] >> 48) & MSK_15;
-    if (fp_class < 224) { // 220 out of 252 has reduced range to prevent over/under flow
-      exp = exp/2 + MSK_15/4;
-      mundane = true;
-    }
-    w[1] = s | (exp << 48) | mh;
-  } else {
-    if (fp_class == 0)        { // zero
-    } else if (fp_class == 1) { // subnormal
-      uint64_t exp = (ra[1] >> 48) & MSK_15;
-      int nbits = ((exp*112)>>15)+1;
-      if (nbits <= 64) {
-        w[0] = (ra[0] >> (64-nbits)) | (uint64_t(1) << (nbits-1));
-        w[1] = 0;
-      } else {
-        w[0] = ra[0];
-        w[1] = (ra[1] >> (128-nbits)) | (uint64_t(1) << (nbits-65));
-      }
-    } else if (fp_class == 3) { // infinity
-      w[1] = uint64_t(MSK_15) << 48;
-    } else                    { // NaN
-      w[0] = ra[0];
-      w[1] = (uint64_t(MSK_15) << 48) | (ra[1] >> 48);
-    }
-    w[1] |= (ra[1] & BIT_63); // copy sign
-  }
-  memcpy(dst, w, sizeof(*dst));
-  return mundane;
-}
-
-void clear_ls_bits(__float128* x, int nbits)
-{
-  uint8_t bytes[sizeof(*x)];
-  memcpy(bytes, x, sizeof(*x));
-  #if (__FLOAT_WORD_ORDER__ == __ORDER_LITTLE_ENDIAN__)
-  const int inv = 0;
-  #else
-  const int inv = sizeof(*x)-1;
-  #endif
-  for (int i = 0; i < nbits/8; ++i)
-    bytes[i ^ inv] = 0;
-  bytes[(nbits/8) ^ inv] &= (uint8_t)(255 << (nbits % 8));
-  memcpy(x, bytes, sizeof(*x));
-}
 
 void test(long long it0, long long it1, test_context* context)
 {
@@ -124,41 +67,14 @@ void test(long long it0, long long it1, test_context* context)
     for (int k = 0; k < RA_LEN; ++k)
       ra[k] = rndGen();
 
-    uint8_t  x_class = ra[0] >> (8*0);
-    uint8_t  y_class = ra[0] >> (8*1);
-    uint8_t  r_class = ra[0] >> (8*2);
-    uint8_t  r_prm_x = ra[0] >> (8*3);
-    uint8_t  r_prm_y = ra[0] >> (8*4);
+    __float128 xy[2];
+    make_test_values_for_mulq(xy, ra);
 
-    __float128 x, y;
-    bool x_mundane = make_float128(&x, &ra[1], x_class);
-    bool y_mundane = make_float128(&y, &ra[3], y_class);
-    if (x_mundane && y_mundane) {
-      if (r_class < 2) { // force result to be near subnormal range
-        int x_exp;
-        frexpq(x, &x_exp);
-        if (x_exp > -0x1000) {
-          int de = ((-0x1000 - x_exp)/0x0800 - 1)*0x800;
-          x = ldexpq(x, de);
-          x_exp += de;
-        }
-        const int r_exp_max = -0x4000 + 10;
-        int y_exp;
-        frexpq(y, &y_exp);
-        int de = ((r_exp_max - x_exp - y_exp)/256 - 1)*256;
-        y = ldexpq(y, de);
-        if (r_class == 0) { // reduce number of significant bits
-          clear_ls_bits(&x, (r_prm_x % 112) + 1);
-          clear_ls_bits(&y, (r_prm_y % 112) + 1);
-        }
-      }
-    }
-
-    float128_to_mpfr(xx, &x);
-    float128_to_mpfr(yx, &y);
+    float128_to_mpfr(xx, &xy[0]);
+    float128_to_mpfr(yx, &xy[1]);
 
     feclearexcept(FE_ALL_EXCEPT);
-    __float128 res = x * y;
+    __float128 res = xy[0] * xy[1];
     int res_ex = fetestexcept(FE_ALL_EXCEPT);
     float128_to_mpfr(resx, &res);
 
@@ -213,8 +129,8 @@ void test(long long it0, long long it1, test_context* context)
         context->sema.lock();
         if (context->nMism < 10) {
           char xbuf[256], ybuf[256], rbuf[256];
-          quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", x);
-          quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", y);
+          quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", xy[0]);
+          quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", xy[1]);
           quadmath_snprintf(rbuf, sizeof(rbuf), "%+-.28Qa", res);
           mpfr_printf(
            "x    %-+45.28Ra %-50.36Re %s\n"

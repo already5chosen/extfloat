@@ -19,6 +19,9 @@ obj/qmx2mpfr.o:../util/qmx2mpfr.c
 obj/mpfr_strtofr_clipped_to_float128.o:../util/mpfr_strtofr_clipped_to_float128.c
 	$(CC) $(COPT) -c -MD $< -o $@
 
+obj/mulq_test_generator.o:../util/mulq_test_generator.c
+	$(CC) $(COPT) -c -MD $< -o $@
+
 obj/tmul_man.o:../multiplication/tmul_man.c
 	$(CC) $(COPT) -c -MD $< -o $@ -I../util
 
@@ -28,12 +31,13 @@ obj/tmul.o:../multiplication/tmul.cpp
 -include obj/mulq32.d
 -include obj/qmx2mpfr.d
 -include obj/mpfr_strtofr_clipped_to_float128.d
+-include obj/mulq_test_generator.d
 -include obj/tmul_man.d
 -include obj/tmul.d
 
 # link
 
-tmul:obj/tmul.o obj/mulq32.o obj/qmx2mpfr.o
+tmul:obj/tmul.o obj/mulq32.o obj/qmx2mpfr.o obj/mulq_test_generator.o
 	$(CPP) -s $^ -lm -lquadmath -lmpfr -lgmp -lpthread -o $@
 
 tmul_man:obj/tmul_man.o obj/mulq32.o obj/qmx2mpfr.o obj/mpfr_strtofr_clipped_to_float128.o
