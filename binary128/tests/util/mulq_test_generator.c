@@ -98,25 +98,29 @@ void make_test_values_for_mulq(__float128 dst[2], const uint64_t random_words[5]
     make_float128(&dst[0], &random_words[1], x_class);
     make_float128(&dst[1], &random_words[3], y_class);
   } else { // x and y generated together for desired properties of result
-    uint32_t prm1 = (uint16_t)class_w >> (8*1);
-    uint32_t prm2 = (uint16_t)class_w >> (8*3);
+    uint32_t prm1 = (uint16_t)(class_w >> (8*1));
+    uint32_t prm2 = (uint16_t)(class_w >> (8*3));
     uint64_t x_lo = random_words[1];
     uint64_t x_hi = random_words[2];
     uint64_t y_lo = random_words[3];
     uint64_t y_hi = random_words[4];
+    uint32_t r_nbits = 0;
     if (r_class > 0) { // reduce number of significant bits in product of mantissa
-      uint32_t r_nbits = prm1*225 >> 16;
+      r_nbits = prm1*225 >> 16;
       uint32_t x_nbits = r_nbits*prm2 >> 16;
       if (x_nbits > 112) x_nbits = 112;
       uint32_t y_nbits = r_nbits - x_nbits;
       if (y_nbits > 112) y_nbits = 112;
       clear_lsbits(&x_hi, &x_lo, x_nbits);
       clear_lsbits(&y_hi, &y_lo, y_nbits);
+      r_nbits = x_nbits + y_nbits;
     }
-    if (r_class < 2) { // exponent of result near subnormal range
+    if (r_class < 3) { // exponent of result near subnormal range
       uint32_t x_exp = (x_hi >> 48) & MSK_15;
       uint32_t y_exp = (y_hi >> 48) & MSK_15;
       uint32_t r_exp = (((x_exp + y_exp) * 128) >> 16) + EXP_BIAS - 120;
+      if (r_class == 2 && r_nbits < 115)
+        r_exp = r_nbits - 113 + EXP_BIAS; // small number of significant bits in reminder. High probability of tie
       x_exp = (r_exp * (uint64_t)x_exp) >> 15;
       y_exp = r_exp - x_exp;
       x_hi = (x_hi & (MSK_48 | BIT_63)) | ((uint64_t)x_exp << 48);
