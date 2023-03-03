@@ -137,7 +137,7 @@ void test(long long it0, long long it1, test_context* context)
 
       float128_to_mpfr(resx, &results[mode_i]);
       int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
-      if ((ref_ex ^ results_ex[mode_i]) & (FE_OVERFLOW|FE_UNDERFLOW))
+      if ((ref_ex ^ results_ex[mode_i]) & (FE_OVERFLOW|FE_UNDERFLOW|FE_INEXACT))
         equal = 0;
       if (!equal) {
         if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
@@ -151,15 +151,17 @@ void test(long long it0, long long it1, test_context* context)
              "%s\n"
              "x    %-+45.28Ra %-50.36Re %s\n"
              "y    %-+45.28Ra %-50.36Re %s\n"
-             "res  %-+45.28Ra %-50.36Re %s%s%s\n"
-             "ref  %-+45.28Ra %-50.36Re%s%s\n"
+             "res  %-+45.28Ra %-50.36Re %s%s%s%s\n"
+             "ref  %-+45.28Ra %-50.36Re%s%s%s\n"
              ,rm_db[mode_i].str
              ,xx,   xx, xbuf
              ,yx,   yx, ybuf
              ,resx, resx, rbuf
+             ,results_ex[mode_i] & FE_INEXACT   ? " Inexact"   : ""
              ,results_ex[mode_i] & FE_OVERFLOW  ? " Overflow"  : ""
              ,results_ex[mode_i] & FE_UNDERFLOW ? " Underflow" : ""
              ,ref,  ref
+             ,ref_ex & FE_INEXACT   ? " Inexact"   : ""
              ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
              ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
             );

@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <fenv.h>
-#include "private/rounding_modes.h"
 
 #ifdef __amd64
 #ifdef __WIN64
@@ -59,6 +58,17 @@ unsigned __int128 f128_to_u128(__float128 f)
   #endif
 }
 
+static __inline uint64_t d2u(double d) {
+  uint64_t u;
+  memcpy(&u, &d, sizeof(u));
+  return u;
+}
+
+static __inline double u2d(uint64_t u) {
+  double d;
+  memcpy(&d, &u, sizeof(d));
+  return d;
+}
 __float128 __multf3(__float128 srcx, __float128 srcy)
 {
   // return srcx * srcy;
@@ -70,19 +80,23 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint64_t yHi = (uint64_t)(u_y >> 64);
   uint64_t yLo = (uint64_t)u_y;
 
-  const uint64_t BIT_47       = (uint64_t)1 << 47;
-  const uint64_t BIT_48       = (uint64_t)1 << 48;
-  const uint64_t BIT_62       = (uint64_t)1 << 62;
-  const uint64_t BIT_63       = (uint64_t)1 << 63;
+  const uint64_t BIT_1        = 1;
+  const uint64_t BIT_47       = BIT_1 << 47;
+  const uint64_t BIT_48       = BIT_1 << 48;
+  const uint64_t BIT_51       = BIT_1 << 51;
+  const uint64_t BIT_62       = BIT_1 << 62;
+  const uint64_t BIT_63       = BIT_1 << 63;
   const uint64_t SIGN_BIT     = BIT_63;
   const int      EXP_BIAS     = 0x3FFF;
   const int      EXP_NAN_INF  = 0x7FFF;
   const uint64_t MSK_48       = BIT_48 - 1;
+  const uint64_t MSK_51       = BIT_51 - 1;
   const uint64_t INF_MSW      = (uint64_t)EXP_NAN_INF << 48;
   const uint64_t QNAN_BIT     = BIT_47;
   const uint64_t QNAN_MSW     = INF_MSW | QNAN_BIT;
   const uint64_t SNAN_MSW     = INF_MSW;
   const uint64_t MIN_NORMAL_MSW = BIT_48;
+  const uint64_t DBL_INF_MSW  = (uint64_t)0x7ff << 52;
 
   int xBiasedExp  = (xHi*2) >> 49;
   int yBiasedExp  = (yHi*2) >> 49;
@@ -177,47 +191,34 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
    xy2          =  (uint64_t)mxy2;
    uint64_t xy3 = (uint64_t)(mxy2>>64);
 
+   xy0 = (uint32_t)xy0 | (xy0 >> 32); // fold sticky bits into lower 32 bits
+   xy1 |= xy0;                        // transfer all sticky bits into xy1
+
   // normalize and round to nearest
   unsigned msbit = (xy3 >> 33);
   resBiasedExp += (int)msbit;
-  int rm = fast_fegetround();
-  if (rm != fast_FE_TONEAREST) {
-    if (xySign) {
-      if (rm == fast_FE_DOWNWARD)
-        rm = fast_FE_UPWARD;
-      else if (rm == fast_FE_UPWARD)
-        rm = fast_FE_DOWNWARD;
-    }
-    // At this point rm==fast_FE_UPWARD means 'away from zero', rm==fast_FE_DOWNWARD means 'toward zero'
-  }
-  uint64_t rnd_incr = (uint64_t)(msbit + 1) << 47;
-  uint64_t rnd_msk = rnd_incr*2 - 1;
-  // cause inexact exception when there are non-zero bits below LSbit of result
-  #if 0
-  static const double inexact_exception_tab[] = { 0, 0x1.0p-64 };
-  volatile double dummy = inexact_exception_tab[((xy0 | (xy1 & rnd_msk))) != 0] + 1.0;
-  (void)dummy;
-  #endif
-  if (xy0 | (xy1 & rnd_msk))
-    feraiseexcept(FE_INEXACT); // raise Inexact exception
 
-  if (rm != fast_FE_TONEAREST) {
-    xy1 |= (xy0 != 0);
-    xy0 = (xy1 & rnd_msk);
-    rnd_incr = (rm == fast_FE_UPWARD) ? rnd_msk : 0;
-  }
-  xy1 += rnd_incr;
-  if (__builtin_expect(xy1 < rnd_incr, 0)) { // carry out of xy1
-    xy2 += 1;
-    if (xy2 < 1)
-      xy3 += 1;
-  }
-
-  // Compose and return result
-  int lshift = 16 - msbit;
+  int lshift = 15 - msbit;
+  uint64_t resGR = (xy1 << lshift); // LS Bit of result, Guard, Round  and sticky bits. LS Bit of result in bit 63
+  // Compose mantissa and exponent
+  lshift += 1;
   uint64_t resHi = (xy3 << lshift) | (xy2 >> (64-lshift));
   uint64_t resLo = (xy2 << lshift) | (xy1 >> (64-lshift));
   resHi += ((uint64_t)(unsigned)(resBiasedExp) << 48);
+
+  // Round by mocking binary128 rounding with binary64 (a.k.a. double) rounding
+  // Doing it this way we avoid costly reading of current rounding mode
+  // It also has a desirable side effect of correctly setting Inexact flag
+  const uint64_t DBL_BIAS = 2;
+  uint64_t rnd_u1 = (resGR >> 12) | (DBL_BIAS << 52) | xySign;
+  uint64_t rnd_u2 = ((DBL_BIAS+51) << 52) | xySign;
+  uint64_t rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
+  // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
+  uint64_t rnd_incr = ((rnd_u1 >> 51) ^ rnd_sum_u) & 1;
+  if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
+    resHi += 1;
+  // Finish rounding of normal case
+
   if (__builtin_expect_with_probability(resHi-MIN_NORMAL_MSW >= INF_MSW-MIN_NORMAL_MSW, 0, 1.0)) {
     // exponent overflow or underflow
     resHi -= MIN_NORMAL_MSW;
@@ -225,62 +226,47 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
       unsigned rshift = (1<<16) - (unsigned)(resHi >> 48);
       resHi = (resHi & MSK_48) | BIT_48;
       // Undo "normal" rounding
-      if (rnd_incr) {
-        uint64_t rnd_msk = (rnd_incr & 1) ? rnd_incr : rnd_incr * 2 - 1;
-        if ((xy1 & rnd_msk) < rnd_incr) {
-          if (resLo == 0)
-            resHi -= 1;
-          resLo -= 1;
-        }
-        xy0 |= (xy1 - rnd_incr) & rnd_msk; // sticky bits
-      }
+      if (resLo < rnd_incr)
+        resHi -= 1;
+      resLo -= rnd_incr;
+      uint64_t sticky_bits = rnd_u1 & MSK_51;
 
       // de-normalize and round again
-      if (rshift >= 64) {
+      if (rshift >= 63) {
         if (rshift >= 115)
           rshift = 115;
-        xy0  |= (resLo << 1);        // sticky bits
-        resLo = (resLo >> 63) | (resHi << 1);
-        resHi = (resHi >> 63);
-        rshift -= 63; // [64:114] => [1:51]
+        sticky_bits |= (resLo << 2);
+        resLo = (resLo >> 62) | (resHi << 2);
+        resHi = (resHi >> 62);
+        rshift -= 62; // [63:115] => [1:53]
       }
-      // rshift in [1:63]
-      rnd_incr = (uint64_t)1 << (rshift-1);
-      uint64_t rnd_msk = rnd_incr * 2 - 1;
-      if (rm != fast_FE_TONEAREST) {
-        if (rm==fast_FE_UPWARD) {
-          resLo |= (xy0 != 0);
-          rnd_incr = rnd_msk;
-        } else {
-          rnd_incr = 0;
-        }
-      }
-      if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
-        resHi += 1;
-      xy1 = resLo;
+      // rshift = [1:62]
+      resGR = (resLo << (63-rshift)); // LS Bit of result, Guard, Round  and sticky bits. LS Bit of result in bit 63
       resLo = (resLo >> rshift) | (resHi << (64-rshift));
       resHi = (resHi >> rshift);
-      if (xy0 | ((xy1-rnd_incr) & rnd_msk))
+
+      sticky_bits |= (uint32_t)resGR; // preserve LS bits of resGR before right shift
+      // Do the same mockery-based rounding as in normal case
+      rnd_u1 = (resGR >> 12) | (sticky_bits != 0);
+      if (rnd_u1 & MSK_51) { // result inexact
+        rnd_u1 |= (DBL_BIAS << 52) | xySign;
+        rnd_u2 = ((DBL_BIAS+51) << 52) | xySign;
+        rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
+        // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
+        rnd_incr = ((rnd_u1 >> 51) ^ rnd_sum_u) & 1;
+        if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
+          resHi += 1;
         feraiseexcept(FE_UNDERFLOW | FE_INEXACT); // raise Underflow+Inexact exception
-    } else { // Overflow
-      feraiseexcept(FE_OVERFLOW | FE_INEXACT); // raise Overflow+Inexact exception
-      resHi = INF_MSW;
-      resLo = 0;
-      if (rm != fast_FE_TONEAREST && rm != fast_FE_UPWARD) {
-        // in case of rounding toward zero return maximal normal value
-        resLo = (uint64_t)-1;
-        resHi += resLo;
       }
+    } else { // Overflow
+      // Mock binary64 overflow
+      uint64_t mocked_u = d2u(u2d((DBL_INF_MSW-1) | xySign) * 2.0);
+      uint64_t round_to_max_normal = mocked_u & 1;
+      resHi = INF_MSW - round_to_max_normal;
+      resLo = 0 -  round_to_max_normal;
     }
   }
-  if (rm == fast_FE_TONEAREST) {
-    // test for tie
-    uint64_t rnd_msk = rnd_incr * 2 - 1;
-    if (__builtin_expect_with_probability((xy1 & rnd_msk)==0, 0, 1.0)) { // possibly a tie
-      if (xy0 == 0)            // indeed, a tie
-        resLo &= ~(uint64_t)1; // break tie to even
-    }
-  }
+  // Set sign bit and return result
   resHi |= xySign;
   return mk_f128(resHi, resLo);
 }
