@@ -214,7 +214,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
   uint64_t rnd_u2 = ((DBL_BIAS+51) << 52) | xySign;
   uint64_t rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
   // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
-  uint64_t rnd_incr = ((rnd_u1 >> 51) ^ rnd_sum_u) & 1;
+  uint64_t rnd_incr = (resLo ^ rnd_sum_u) & 1;
   if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
     resHi += 1;
   // Finish rounding of normal case
@@ -253,7 +253,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
         rnd_u2 = ((DBL_BIAS+51) << 52) | xySign;
         rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
         // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
-        rnd_incr = ((rnd_u1 >> 51) ^ rnd_sum_u) & 1;
+        rnd_incr = (resLo ^ rnd_sum_u) & 1;
         if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
           resHi += 1;
         feraiseexcept(FE_UNDERFLOW | FE_INEXACT); // raise Underflow+Inexact exception
