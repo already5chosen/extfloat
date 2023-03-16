@@ -304,8 +304,19 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
     // At this point rm==fast_FE_UPWARD means 'away from zero', rm==fast_FE_DOWNWARD means 'toward zero'
   }
   uint32_t rnd_incr = (uint32_t)(msbit + 1) << 15;
+  uint32_t rnd_msk = rnd_incr*2 - 1;
+
+  // conditionally raise Inexact exception
+  #if 0
+  if ((xy2 | (xy3 & rnd_msk)) != 0)
+    feraiseexcept(FE_INEXACT); // raise Inexact exception
+  #else
+  static const double inexact_exception_tab[] = { 0, 0x1.0p-64 };
+  volatile double dummy = inexact_exception_tab[(xy2 | (xy3 & rnd_msk)) != 0] + 1.0;
+  (void)dummy;
+  #endif
+
   if (rm != fast_FE_TONEAREST) {
-    uint32_t rnd_msk = rnd_incr*2 - 1;
     xy3 |= (xy2 != 0);
     xy2 = (xy3 & rnd_msk);
     rnd_incr = (rm == fast_FE_UPWARD) ? rnd_msk : 0;
