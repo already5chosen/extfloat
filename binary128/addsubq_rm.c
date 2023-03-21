@@ -250,7 +250,11 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
         // No shift or right shift. Rounding required. Subnormal result impossible
         // This case expected to be the most common in real world
         unsigned rshift = 15 - lz; // rshift in range [0:15]
-        uint64_t rnd_incr = ((uint64_t)(1) << rshift) >> 1;
+        uint64_t rnd_incr2 = (uint64_t)(1) << rshift;
+        uint64_t rnd_incr = rnd_incr2 >> 1;
+        uint64_t rnd_msk = rnd_incr2 - 1;
+        if (xLo & rnd_msk)
+          feraiseexcept(FE_INEXACT); // raise Inexact exception
         if (rm != fast_FE_TONEAREST) {
           if (rnd_incr) {
             if (rm == fast_FE_UPWARD)
@@ -263,7 +267,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
         xHi += xLo < rnd_incr;
         resLo = (xLo >> rshift) | ((xHi << (rshift^63)) << 1);
         resHi = xHi >> rshift;
-        uint64_t rnd_msk = rnd_incr * 2 - 1;
+        rnd_msk = rnd_incr * 2 - 1;
         if (__builtin_expect_with_probability((xLo & rnd_msk)==0, 0, 1.0)) { // a tie
           if (rm == fast_FE_TONEAREST) {
             resLo &= ~(uint64_t)1; // break tie to even
@@ -293,6 +297,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
     yHi = (int64_t)yHi >> rshift;
     if (__builtin_expect((delta_exp >= 64),0)) {
       if (__builtin_expect((delta_exp > 114),1)) {
+        feraiseexcept(FE_INEXACT); // raise Inexact exception
         if (rm != fast_FE_TONEAREST) {
           if (rm == fast_FE_UPWARD) {
             // y = y < 0 ? 0 : 1
@@ -311,7 +316,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
       // 64 <= delta_exp <= 114
       // Let's do a trick:
       //	Since delta_exp in [64:114] delta_exp % 64 is in [0:50]. It means that 14 LS bits of yG==0
-      // On the other hand, since delta_exp > 1 we are guranteed to have no moore than 1 MS bit of mnt_hi(x) canceled during summation
+      // On the other hand, since delta_exp > 1 we are guaranteed to have no more than 1 MS bit of mnt_hi(x) canceled during summation
       // which means that we need at most 2 exact MS bits in yG and the rest are sticky bits.
       // Then we can calculate yG = (yG >> 8) | yLo
       yG  = (yG >> 8) | yLo;
@@ -328,6 +333,9 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
     resLo = unsafe_shldq(xLo, yG,  lz);
     uint64_t resG  = yG << lz;
     exp_res = exp_x + 15 - lz;
+
+    if ((resLo & MSK_15) | resG)
+      feraiseexcept(FE_INEXACT); // raise Inexact exception
 
     resHi &= ~BIT_63; // clear hidden bit
     // round to nearest
