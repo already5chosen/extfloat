@@ -358,7 +358,11 @@ __float128 __addtf3(__float128 x, __float128 y)
         // No shift or right shift. Rounding required. Subnormal result impossible
         // This case expected to be the most common in real world
         unsigned rshift = 15 - lz; // rshift in range [0:15]
-        uint32_t rnd_incr = ((uint32_t)(1) << rshift) >> 1;
+        uint32_t rnd_incr2 = (uint32_t)(1) << rshift;
+        uint32_t rnd_incr = rnd_incr2 >> 1;
+        uint32_t rnd_msk = rnd_incr2 - 1;
+        if (x0 & rnd_msk)
+          feraiseexcept(FE_INEXACT); // raise Inexact exception
         if (rm != fast_FE_TONEAREST) {
           if (rnd_incr) {
             if (rm == fast_FE_UPWARD)
@@ -373,7 +377,7 @@ __float128 __addtf3(__float128 x, __float128 y)
         res1 = shrdd(x2, x1, rshift);
         res2 = shrdd(x3, x2, rshift);
         res3 = x3 >> rshift;
-        uint32_t rnd_msk = rnd_incr * 2 - 1;
+        rnd_msk = rnd_incr * 2 - 1;
         if (__builtin_expect_with_probability((x0 & rnd_msk)==0, 0, 1.0)) { // a tie
           if (rm == fast_FE_TONEAREST) {
             res0 &= ~(uint32_t)1; // break tie to even
@@ -401,6 +405,7 @@ __float128 __addtf3(__float128 x, __float128 y)
     }
   } else { // delta_exp > 14
     if (delta_exp > 114) {
+      feraiseexcept(FE_INEXACT); // raise Inexact exception
       if (rm != fast_FE_TONEAREST) {
         if (rm == fast_FE_UPWARD) {
           // y = y < 0 ? 0 : 1
@@ -458,6 +463,9 @@ __float128 __addtf3(__float128 x, __float128 y)
     res0 = unsafe_shldd(x0, yG, lz);
     uint32_t resG  = yG << lz;
     exp_res = exp_x + 15 - lz;
+
+    if ((res0 & MSK_15) | resG)
+      feraiseexcept(FE_INEXACT); // raise Inexact exception
 
     res3 &= ~BIT_31; // clear hidden bit
     if (rm == fast_FE_TONEAREST) {
