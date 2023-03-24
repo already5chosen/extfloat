@@ -73,7 +73,7 @@ int main(int argz, char** argv)
     }
 
     float128_to_mpfr(resx, &results[mode_i]);
-    int succ = mpfr_equal_p(ref, resx);
+    int succ = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
     if (!succ && mpfr_nan_p(ref) && mpfr_nan_p(resx))
       succ = true;
 
