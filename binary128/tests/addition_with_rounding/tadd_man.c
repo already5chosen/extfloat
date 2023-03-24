@@ -85,8 +85,8 @@ int main(int argz, char** argv)
     mpfr_printf(
      "%s\n"
      "res  %-45s %016llx:%016llx\n"
-     "resx %-+45.28Ra %+-54.40Re\n"
-     "ref  %-+45.28Ra %+-54.40Re\n"
+     "resx %-+45.28Ra %+-54.40Re%s%s%s%s\n"
+     "ref  %-+45.28Ra %+-54.40Re%s%s%s%s\n"
      "%s\n"
      , rm_db[mode_i].str
      , resbuf
