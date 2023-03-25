@@ -11,6 +11,8 @@ ALLEXE += mm_speed_afmr
 ALLEXE += mm_speed_armr
 ALLEXE += mm_speed_afmr_mocks
 ALLEXE += mm_speed_armr_mocks
+ALLEXE += mm_speed_armf_mocks
+ALLEXE += mm_speed_armr_mocks2
 # ALLEXE += mm_prec
 # ALLEXE += mm_prec_ma
 
@@ -37,6 +39,9 @@ obj/mulq_rm_mocks.o:../../mulq_rm_mocks.c
 	$(CC) $(COPT) -c -MD $< -o $@
 
 
+obj/addsubq_rm_mocks.o:../../addsubq_rm_mocks.c
+	$(CC) $(COPT) -c -MD $< -o $@
+
 obj/matmulq.o:../matmulq/matmulq.c
 	$(CC) $(COPT) -c -MD $< -o $@
 
@@ -54,6 +59,7 @@ obj/mm_prec.o:../matmulq/mm_prec.cpp
 -include obj/mulq_rm.d
 -include obj/addsubq_rm.d
 -include obj/mulq_rm_mocks.d
+-include obj/addsubq_rm_mocks.d
 -include obj/matmulq.d
 -include obj/qmx2mpfr.d
 -include obj/mm_speed.d
@@ -80,6 +86,12 @@ mm_speed_afmr_mocks:obj/mm_speed.o obj/matmulq.o obj/addsubq.o obj/mulq_rm_mocks
 	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
 
 mm_speed_armr_mocks:obj/mm_speed.o obj/matmulq.o obj/addsubq_rm.o obj/mulq_rm_mocks.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_speed_armf_mocks:obj/mm_speed.o obj/matmulq.o obj/addsubq_rm_mocks.o obj/mulq.o
+	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
+
+mm_speed_armr_mocks2:obj/mm_speed.o obj/matmulq.o obj/addsubq_rm_mocks.o obj/mulq_rm_mocks.o
 	$(CPP) -s $^ -lm -lquadmath -o $@ -Xlinker -Map=./map/$@.map
 
 
