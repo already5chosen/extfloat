@@ -19,7 +19,10 @@ struct test_context {
   long long  nMism[4];
   long long  nMismTotal;
   long long  nSamples;
+  long long  nZeros;
   long long  nOverflow;
+  long long  nInf;
+  long long  nNan;
 };
 
 extern "C" {
@@ -83,6 +86,19 @@ static int make_float128(__float128* dst, const uint64_t ra[2], int fp_class, in
   return retexp;
 }
 
+static void sprint_float128(char buf[], size_t buflen,  __float128 x)
+{
+  quadmath_snprintf(buf, buflen, "%+-.28Qa", x);
+  if (isnanq(x)) {
+    size_t beg = strlen(buf);
+    uint64_t u[2];
+    memcpy(u, &x, sizeof(u));
+    snprintf(&buf[beg], buflen-beg, " %016llx-%016llx"
+     ,(unsigned long long)u[1]
+     ,(unsigned long long)u[0]);
+  }
+}
+
 void test(long long it0, long long it1, test_context* context)
 {
   std::mt19937_64 rndGen(it0+1);
@@ -106,7 +122,11 @@ void test(long long it0, long long it1, test_context* context)
   mpfr_mul_d(res_subnormal_h, res_subnormal_h, 0.5, GMP_RNDN);
 
   long long nSamples = 0;
+  long long nZeros    = 0;
   long long nOverflow = 0;
+  long long nNan      = 0;
+  long long nInf      = 0;
+
   for (long long i = it0; i < it1; ++i) {
     const int RA_LEN = 1+2+2;
     uint64_t ra[RA_LEN];
@@ -189,51 +209,73 @@ void test(long long it0, long long it1, test_context* context)
           ref_ex |= FE_OVERFLOW | FE_INEXACT;
           ++nOverflow;
         }
+      }  else {
+        if (mpfr_nan_p(ref))
+          ++nNan;
+        else if (mpfr_zero_p(ref))
+          ++nZeros;
+        else
+          ++nInf;
       }
 
       int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
+      if (mpfr_nan_p(ref) && mpfr_nan_p(resx)) {
+        equal = 1;
+        if (issignalingq(xy[0]))
+          ref_ex |= FE_INVALID;
+        if (issignalingq(xy[1]))
+          ref_ex |= FE_INVALID;
+        if (!isnanq(xy[0]) && !isnanq(xy[1]))
+          ref_ex |= FE_INVALID; // happens for inf - inf
+      }
       int res_ex = results_ex[mode_i];
-      if ((ref_ex ^ res_ex) & (FE_OVERFLOW|FE_UNDERFLOW|FE_INEXACT))
+      if ((ref_ex ^ res_ex) & (FE_OVERFLOW|FE_UNDERFLOW|FE_INEXACT|FE_INVALID))
         equal = 0;
       if (!equal) {
-        if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
-          context->sema.lock();
-          if (context->nMismTotal < 10) {
-            char xbuf[256], ybuf[256], rbuf[256];
-            quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", xy[0]);
-            quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", xy[1]);
-            quadmath_snprintf(rbuf, sizeof(rbuf), "%+-.28Qa", res);
-            mpfr_printf(
-             "%s\n"
-             "x    %-+45.28Ra %-50.36Re %s\n"
-             "y    %-+45.28Ra %-50.36Re %s\n"
-             "res  %-+45.28Ra %-50.36Re %s%s%s%s\n"
-             "ref  %-+45.28Ra %-50.36Re%s%s%s\n"
-             ,rm_db[mode_i].str
-             ,xx,   xx, xbuf
-             ,yx,   yx, ybuf
-             ,resx, resx, rbuf
-             ,res_ex & FE_INEXACT   ? " Inexact"   : ""
-             ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
-             ,res_ex & FE_UNDERFLOW ? " Underflow" : ""
-             ,ref,  ref
-             ,ref_ex & FE_INEXACT   ? " Inexact"   : ""
-             ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
-             ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
-            );
-            fflush(stdout);
-          }
-          ++context->nMism[mode_i];
-          ++context->nMismTotal;
-          context->sema.unlock();
+        context->sema.lock();
+        if (context->nMismTotal < 10) {
+          char xbuf[256], ybuf[256], rbuf[256];
+          sprint_float128(xbuf, sizeof(xbuf), xy[0]);
+          sprint_float128(ybuf, sizeof(ybuf), xy[1]);
+          sprint_float128(rbuf, sizeof(rbuf), res);
+          mpfr_printf(
+           "%s\n"
+           "x    %-+45.28Ra %-50.36Re %s\n"
+           "y    %-+45.28Ra %-50.36Re %s\n"
+           "res  %-+45.28Ra %-50.36Re %s%s%s%s%s\n"
+           "ref  %-+45.28Ra %-50.36Re%s%s%s%s\n"
+           ,rm_db[mode_i].str
+           ,xx,   xx, xbuf
+           ,yx,   yx, ybuf
+           ,resx, resx, rbuf
+           ,res_ex & FE_INEXACT   ? " Inexact"   : ""
+           ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
+           ,res_ex & FE_UNDERFLOW ? " Underflow" : ""
+           ,res_ex & FE_INVALID   ? " Invalid"   : ""
+           ,ref,  ref
+           ,ref_ex & FE_INEXACT   ? " Inexact"   : ""
+           ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+           ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
+           ,ref_ex & FE_INVALID   ? " Invalid"   : ""
+          );
+          fflush(stdout);
         }
+        ++context->nMism[mode_i];
+        ++context->nMismTotal;
+        context->sema.unlock();
       }
     }
     ++nSamples;
   }
   context->sema.lock();
   context->nSamples += nSamples;
-  context->nOverflow += nOverflow;
+  context->nZeros     += nZeros;
+  // context->nUnderflow += nUnderflow;
+  // context->nSubnormal += nSubnormal;
+  // context->nNormal    += nNormal;
+  context->nOverflow  += nOverflow;
+  context->nInf       += nInf;
+  context->nNan       += nNan;
   context->sema.unlock();
 }
 
@@ -251,7 +293,14 @@ int main(int argz, char** argv)
   tc.nMismTotal = 0;
   tc.nSamples = 0;
   memset(tc.nMism, 0, sizeof(tc.nMism));
+  tc.nZeros     = 0;
+  // tc.nUnderflow = 0;
+  // tc.nSubnormal = 0;
+  // tc.nNormal    = 0;
   tc.nOverflow  = 0;
+  tc.nInf       = 0;
+  tc.nNan       = 0;
+
   const int N_THREADS = 64;
   long long itPerThread = (tc.nIter-1)/N_THREADS + 1;
   std::thread tid[N_THREADS];
@@ -260,10 +309,16 @@ int main(int argz, char** argv)
   for (int i = 0; i < N_THREADS; ++i)
     tid[i].join();
 
-  printf("%lld iterations, %lld samples (%lld), %lld (%lld+%lld+%lld+%lld) mismatches.\n"
+  printf("%lld iterations, %lld samples (%lld,%lld,%lld,%lld), %lld (%lld+%lld+%lld+%lld) mismatches.\n"
     , tc.nIter
     , tc.nSamples
+    , tc.nZeros
+    // , tc.nUnderflow
+    // , tc.nSubnormal
+    // , tc.nNormal
     , tc.nOverflow
+    , tc.nInf
+    , tc.nNan
     , tc.nMismTotal
     , tc.nMism[0], tc.nMism[1], tc.nMism[2], tc.nMism[3]);
 
