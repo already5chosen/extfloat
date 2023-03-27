@@ -14,16 +14,15 @@ void mulq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
 
 int main(int argz, char** argv)
 {
+  if (argz < 3)
+    return 1;
+
   mpfr_t xa[2];
-  mpfr_init2(xa[0], 113);
-  mpfr_init2(xa[1], 113);
-
+  __float128 xy[2];
   for (int i = 0; i < 2 && i < argz-1; ++i)
-    mpfr_strtofr_clipped_to_float128(xa[i], argv[i+1], NULL);
+    manual_input_parser(xa[i], &xy[i], argv[i+1]);
 
-  __float128 xy[2], results[4];
-  mpfr_to_float128(&xy[0], xa[0]);
-  mpfr_to_float128(&xy[1], xa[1]);
+  __float128 results[4];
   uint64_t xu[2], yu[2];
   memcpy(xu, &xy[0], sizeof(xu));
   memcpy(yu, &xy[1], sizeof(yu));

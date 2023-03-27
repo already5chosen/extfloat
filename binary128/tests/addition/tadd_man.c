@@ -13,11 +13,9 @@
 int main(int argz, char** argv)
 {
   mpfr_t xa[2];
-  mpfr_init2(xa[0], 113);
-  mpfr_init2(xa[1], 113);
-
+  __float128 xy[2];
   for (int i = 0; i < 2 && i < argz-1; ++i)
-    mpfr_strtofr_clipped_to_float128(xa[i], argv[i+1], NULL);
+    manual_input_parser(xa[i], &xy[i], argv[i+1]);
 
   MPFR_DECL_INIT(flt128_max, 113);
   mpfr_set_ui_2exp(flt128_max, 1, 16384, GMP_RNDN);
@@ -32,12 +30,9 @@ int main(int argz, char** argv)
     }
   }
 
-  __float128 x, y, res;
-  mpfr_to_float128(&x, xa[0]);
-  mpfr_to_float128(&y, xa[1]);
   uint64_t xu[2], yu[2];
-  memcpy(xu, &x, sizeof(xu));
-  memcpy(yu, &y, sizeof(yu));
+  memcpy(xu, &xy[0], sizeof(xu));
+  memcpy(yu, &xy[1], sizeof(yu));
   mpfr_printf(
    "x    %-+45.28Ra %016llx:%016llx %+-54.40Re\n"
    "y    %-+45.28Ra %016llx:%016llx %+-54.40Re\n"
@@ -47,7 +42,7 @@ int main(int argz, char** argv)
   fflush(stdout);
 
   feclearexcept(FE_ALL_EXCEPT);
-  res = x + y;
+  __float128 res = xy[0] + xy[1];
   int res_ex = fetestexcept(FE_ALL_EXCEPT);
 
   MPFR_DECL_INIT(resx, 113);
@@ -81,8 +76,8 @@ int main(int argz, char** argv)
   );
 
   if (!succ) {
-    MPFR_DECL_INIT(xx, 256); float128_to_mpfr(xx, &x);
-    MPFR_DECL_INIT(yx, 113); float128_to_mpfr(yx, &y);
+    MPFR_DECL_INIT(xx, 256); float128_to_mpfr(xx, &xy[0]);
+    MPFR_DECL_INIT(yx, 113); float128_to_mpfr(yx, &xy[1]);
     mpfr_printf(
      "xx   %-+45.28Ra %d\n"
      "yx   %-+45.28Ra %d\n"

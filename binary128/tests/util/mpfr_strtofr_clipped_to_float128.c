@@ -1,4 +1,12 @@
+#include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <quadmath.h>
+
 #include "mpfr_strtofr_clipped_to_float128.h"
+#include "qmx2mpfr.h"
 
 int mpfr_strtofr_clipped_to_float128(mpfr_t rop, const char *nptr, char **endptr)
 {
@@ -24,4 +32,32 @@ int mpfr_strtofr_clipped_to_float128(mpfr_t rop, const char *nptr, char **endptr
     }
   }
   return ret;
+}
+
+void manual_input_parser(mpfr_t rop, _Float128* rop128, const char *nptr)
+{
+  mpfr_init2(rop, 113);
+  char* endp;
+  mpfr_strtofr_clipped_to_float128(rop, nptr, &endp);
+  mpfr_to_float128(rop128, rop);
+  if (isnanq(*rop128) && endp[0] == '.') {
+    bool signaling = false;
+    if (endp[1] == 's') {
+      ++endp;
+      signaling = true;
+    }
+    char tmp[128];
+    snprintf(tmp, sizeof(tmp), "NAN(%s)", endp+1);
+    *rop128 = strtoflt128(tmp, NULL);
+    if (signaling) { // convert xy[i] to signaling NaN
+       uint32_t dw[4];
+       memcpy(dw, rop128, sizeof(dw));
+       #if (__FLOAT_WORD_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+       dw[3] &= ~((uint32_t)1 << 15);
+       #else
+       dw[0] &= ~((uint32_t)1 << 15);
+       #endif
+       memcpy(rop128, dw, sizeof(*rop128));
+    }
+  }
 }

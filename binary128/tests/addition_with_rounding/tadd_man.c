@@ -14,21 +14,20 @@ void addq_all_rm(__float128 res[4], __float128 values[2], int exceptions[4]);
 
 int main(int argz, char** argv)
 {
+  if (argz < 3)
+    return 1;
+    
   mpfr_t xa[2];
-  mpfr_init2(xa[0], 113);
-  mpfr_init2(xa[1], 113);
-
+  __float128 xy[2];
   for (int i = 0; i < 2 && i < argz-1; ++i)
-    mpfr_strtofr_clipped_to_float128(xa[i], argv[i+1], NULL);
+    manual_input_parser(xa[i], &xy[i], argv[i+1]);
 
   MPFR_DECL_INIT(ref,  113);
   MPFR_DECL_INIT(resx, 113);
   MPFR_DECL_INIT(res_max, 113);
   int err = 0;
 
-  __float128 xy[2], results[4];
-  mpfr_to_float128(&xy[0], xa[0]);
-  mpfr_to_float128(&xy[1], xa[1]);
+  __float128 results[4];
   int results_ex[4];
   addq_all_rm(results, xy, results_ex);
 
