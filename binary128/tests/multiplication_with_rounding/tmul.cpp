@@ -137,40 +137,49 @@ void test(long long it0, long long it1, test_context* context)
 
       float128_to_mpfr(resx, &results[mode_i]);
       int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
-      if ((ref_ex ^ results_ex[mode_i]) & (FE_OVERFLOW|FE_UNDERFLOW|FE_INEXACT))
+      if (mpfr_nan_p(ref) && mpfr_nan_p(resx)) {
+        equal = 1;
+        if (issignalingq(xy[0]))
+          ref_ex |= FE_INVALID;
+        if (issignalingq(xy[1]))
+          ref_ex |= FE_INVALID;
+        if (!isnanq(xy[0]) && !isnanq(xy[1]))
+          ref_ex |= FE_INVALID; // happens for inf * 0
+      }
+      if ((ref_ex ^ results_ex[mode_i]) & (FE_OVERFLOW|FE_UNDERFLOW|FE_INEXACT|FE_INVALID))
         equal = 0;
       if (!equal) {
-        if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
-          context->sema.lock();
-          if (context->nMismTotal < 10) {
-            char xbuf[256], ybuf[256], rbuf[256];
-            quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", xy[0]);
-            quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", xy[1]);
-            quadmath_snprintf(rbuf, sizeof(rbuf), "%+-.28Qa", results[mode_i]);
-            mpfr_printf(
-             "%s\n"
-             "x    %-+45.28Ra %-50.36Re %s\n"
-             "y    %-+45.28Ra %-50.36Re %s\n"
-             "res  %-+45.28Ra %-50.36Re %s%s%s%s\n"
-             "ref  %-+45.28Ra %-50.36Re%s%s%s\n"
-             ,rm_db[mode_i].str
-             ,xx,   xx, xbuf
-             ,yx,   yx, ybuf
-             ,resx, resx, rbuf
-             ,results_ex[mode_i] & FE_INEXACT   ? " Inexact"   : ""
-             ,results_ex[mode_i] & FE_OVERFLOW  ? " Overflow"  : ""
-             ,results_ex[mode_i] & FE_UNDERFLOW ? " Underflow" : ""
-             ,ref,  ref
-             ,ref_ex & FE_INEXACT   ? " Inexact"   : ""
-             ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
-             ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
-            );
-            fflush(stdout);
-          }
-          ++context->nMism[mode_i];
-          ++context->nMismTotal;
-          context->sema.unlock();
+        context->sema.lock();
+        if (context->nMismTotal < 10) {
+          char xbuf[256], ybuf[256], rbuf[256];
+          quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", xy[0]);
+          quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", xy[1]);
+          quadmath_snprintf(rbuf, sizeof(rbuf), "%+-.28Qa", results[mode_i]);
+          mpfr_printf(
+           "%s\n"
+           "x    %-+45.28Ra %-50.36Re %s\n"
+           "y    %-+45.28Ra %-50.36Re %s\n"
+           "res  %-+45.28Ra %-50.36Re %s%s%s%s%s\n"
+           "ref  %-+45.28Ra %-50.36Re%s%s%s%s\n"
+           ,rm_db[mode_i].str
+           ,xx,   xx, xbuf
+           ,yx,   yx, ybuf
+           ,resx, resx, rbuf
+           ,results_ex[mode_i] & FE_INEXACT   ? " Inexact"   : ""
+           ,results_ex[mode_i] & FE_OVERFLOW  ? " Overflow"  : ""
+           ,results_ex[mode_i] & FE_UNDERFLOW ? " Underflow" : ""
+           ,results_ex[mode_i] & FE_INVALID   ? " Invalid"   : ""
+           ,ref,  ref
+           ,ref_ex & FE_INEXACT   ? " Inexact"   : ""
+           ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+           ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
+           ,ref_ex & FE_INVALID   ? " Invalid"   : ""
+          );
+          fflush(stdout);
         }
+        ++context->nMism[mode_i];
+        ++context->nMismTotal;
+        context->sema.unlock();
       }
     }
     ++nSamples;

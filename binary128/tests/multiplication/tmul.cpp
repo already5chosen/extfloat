@@ -121,36 +121,44 @@ void test(long long it0, long long it1, test_context* context)
     }
 
     int equal = mpfr_total_order_p(ref, resx) && mpfr_total_order_p(resx, ref);
-    if ((ref_ex ^ res_ex) & (FE_OVERFLOW|FE_UNDERFLOW))
-    // if ((ref_ex ^ res_ex) & (FE_OVERFLOW))
+    if (mpfr_nan_p(ref) && mpfr_nan_p(resx)) {
+      equal = 1;
+      if (issignalingq(xy[0]))
+        ref_ex |= FE_INVALID;
+      if (issignalingq(xy[1]))
+        ref_ex |= FE_INVALID;
+      if (!isnanq(xy[0]) && !isnanq(xy[1]))
+        ref_ex |= FE_INVALID; // happens for inf * 0
+    }
+    if ((ref_ex ^ res_ex) & (FE_OVERFLOW|FE_UNDERFLOW|FE_INVALID))
       equal = 0;
     if (!equal) {
-      if (!mpfr_nan_p(ref) || !mpfr_nan_p(resx)) {
-        context->sema.lock();
-        if (context->nMism < 10) {
-          char xbuf[256], ybuf[256], rbuf[256];
-          quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", xy[0]);
-          quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", xy[1]);
-          quadmath_snprintf(rbuf, sizeof(rbuf), "%+-.28Qa", res);
-          mpfr_printf(
-           "x    %-+45.28Ra %-50.36Re %s\n"
-           "y    %-+45.28Ra %-50.36Re %s\n"
-           "res  %-+45.28Ra %-50.36Re %s%s%s\n"
-           "ref  %-+45.28Ra %-50.36Re%s%s\n"
-           ,xx,   xx, xbuf
-           ,yx,   yx, ybuf
-           ,resx, resx, rbuf
-           ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
-           ,res_ex & FE_UNDERFLOW ? " Underflow" : ""
-           ,ref,  ref
-           ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
-           ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
-          );
-          fflush(stdout);
-        }
-        ++context->nMism;
-        context->sema.unlock();
+      context->sema.lock();
+      if (context->nMism < 10) {
+        char xbuf[256], ybuf[256], rbuf[256];
+        quadmath_snprintf(xbuf, sizeof(xbuf), "%+-.28Qa", xy[0]);
+        quadmath_snprintf(ybuf, sizeof(ybuf), "%+-.28Qa", xy[1]);
+        quadmath_snprintf(rbuf, sizeof(rbuf), "%+-.28Qa", res);
+        mpfr_printf(
+         "x    %-+45.28Ra %-50.36Re %s\n"
+         "y    %-+45.28Ra %-50.36Re %s\n"
+         "res  %-+45.28Ra %-50.36Re %s%s%s%s\n"
+         "ref  %-+45.28Ra %-50.36Re%s%s%s\n"
+         ,xx,   xx, xbuf
+         ,yx,   yx, ybuf
+         ,resx, resx, rbuf
+         ,res_ex & FE_OVERFLOW  ? " Overflow"  : ""
+         ,res_ex & FE_UNDERFLOW ? " Underflow" : ""
+         ,res_ex & FE_INVALID   ? " Invalid"   : ""
+         ,ref,  ref
+         ,ref_ex & FE_OVERFLOW  ? " Overflow"  : ""
+         ,ref_ex & FE_UNDERFLOW ? " Underflow" : ""
+         ,ref_ex & FE_INVALID   ? " Invalid"   : ""
+        );
+        fflush(stdout);
       }
+      ++context->nMism;
+      context->sema.unlock();
     }
     ++nSamples;
   }
