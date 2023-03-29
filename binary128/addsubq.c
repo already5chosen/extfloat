@@ -147,8 +147,10 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   if (__builtin_expect(exp_x == 0x7FFF, 0)) { // x is Inf or NaN
     if ((xLo | xHi)==0)      { // x is Inf
       if (exp_y == 0x7FFF)   { // y is Inf
-        if (sub)
+        if (sub) {
           xHiWord = QNAN_MSW;  // Inf-Inf => QNaN
+          feraiseexcept(FE_INVALID); // raise invalid operand exception
+        }
       }
     } else {  // x is NaN
       if ((xHiWord & QNAN_BIT)==0) { // x is SNaN

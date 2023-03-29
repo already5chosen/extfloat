@@ -133,6 +133,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
     }
 
     if (((xHi<<1)|x0|x1|x2) == 0) {    // x is zero
+      feraiseexcept(FE_INVALID);       // raise invalid operand exception
       return mk4_f128(QNAN_MSW,0,0,0); // return inf*zero => QNaN
     }
 

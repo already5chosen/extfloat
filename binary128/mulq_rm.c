@@ -117,6 +117,7 @@ __float128 __multf3(__float128 srcx, __float128 srcy)
       }
     }
     if (((xHi<<1)|xLo) == 0) {    // x is zero
+      feraiseexcept(FE_INVALID);     // raise invalid operand exception
       return mk_f128(QNAN_MSW, yLo); // return inf*zero => QNaN
     }
 

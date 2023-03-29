@@ -190,8 +190,10 @@ __float128 __addtf3(__float128 x, __float128 y)
           xHiw = yHiw;
         } else {  // y is Inf
           uint32_t sub = (xHiw ^ yHiw) & BIT_31;
-          if (sub)
+          if (sub) {
             xHiw = QNAN_MSW;  // Inf-Inf => QNaN
+            feraiseexcept(FE_INVALID); // raise invalid operand exception
+          }
         }
       }
     } else {  // x is NaN
