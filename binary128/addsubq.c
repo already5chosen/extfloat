@@ -186,7 +186,7 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
 
   unsigned delta_exp = exp_x - exp_y;
   if (delta_exp > 14) {
-    // align mantissa of y with x * 2**14
+    // align mantissa of y with x * 2**-14
     unsigned rshift_x = delta_exp - 14;
     unsigned rshift = rshift_x % 64;
     uint64_t yG = (yLo << (rshift ^ 63)) << 1; // fraction of LS bit

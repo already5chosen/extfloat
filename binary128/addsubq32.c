@@ -151,7 +151,6 @@ void incr128by32(uint32_t* a3, uint32_t *a2, uint32_t* a1, uint32_t* a0, uint32_
 __float128 __addtf3(__float128 x, __float128 y)
 {
   const uint32_t MANT_H_MSK = (uint32_t)-1 >> 16;
-  const uint32_t BIT_14     = (uint32_t)1  << 14;
   const uint32_t BIT_15     = (uint32_t)1  << 15;
   const uint32_t BIT_16     = (uint32_t)1  << 16;
   const uint32_t BIT_31     = (uint32_t)1  << 31;
@@ -274,6 +273,43 @@ __float128 __addtf3(__float128 x, __float128 y)
   uint32_t y0  = get_f128_w0(pY);
   uint32_t y1  = get_f128_w1(pY);
   uint32_t y2  = get_f128_w2(pY);
+
+  unsigned delta_exp = exp_x - exp_y;
+  if (delta_exp > 14) {
+    // align mantissa of y with x * 2**-14
+    unsigned rshift_x = delta_exp - 14;
+    unsigned rshift = rshift_x % 32;
+    uint32_t yG = (y0 << (rshift ^ 31)) << 1; // fraction of LS bit
+    y0 =  shrdd(y1, y0, rshift);
+    y1 =  shrdd(y2, y1, rshift);
+    y2 =  shrdd(y3, y2, rshift);
+    y3 =  y3 >> rshift;
+    if (__builtin_expect((rshift_x >= 32),0)) {
+      if (rshift_x >= 96) {
+        yG |= y0 | y1 | y2;
+        y0 = y3;
+        y1 = y2 = 0;
+        if (rshift_x > 100) { // abs(y) <= 0.25 ULP(x)
+          y0 = 1;
+        }
+      } else if (rshift_x >= 64) {
+        yG |= y0 | y1;
+        y0 = y2;
+        y1 = y3;
+        y2 = 0;
+      } else { // 32 <= rshift_x < 64
+        yG |= y0;
+        y0 = y1;
+        y1 = y2;
+        y2 = y3;
+      }
+      y3  = 0;
+    }
+    y0 |= (yG != 0); // sticky bit
+    delta_exp = 14;
+    exp_y     = exp_x - 14;
+  }
+
   // if (sub) y = - y; Implemented in almost branchless code
   sub = (int32_t)sub >> 31; // convert to all '1' or all '0'. This code is not portable by C rules, but guaranteed to work in gcc
   y0 ^= sub;
@@ -286,156 +322,94 @@ __float128 __addtf3(__float128 x, __float128 y)
   uint32_t x1  = get_f128_w1(pX);
   uint32_t x2  = get_f128_w2(pX);
 
-  unsigned delta_exp = exp_x - exp_y;
+  // align mantissa of x with y
+  x3 =  shldd(x3, x2, delta_exp);
+  x2 =  shldd(x2, x1, delta_exp);
+  x1 =  shldd(x1, x0, delta_exp);
+  x0 =  x0 << delta_exp;
+
+  // add mantissa
+  add128(&x3,&x2,&x1,&x0, x3,x2,x1,x0, y3,y2,y1,y0);
+
+  // Normalize
   unsigned exp_res;
   uint32_t res3, res2, res1, res0;
-  if (delta_exp <= 14) {
-    // align mantissa of x with y
-    x3 =  shldd(x3, x2, delta_exp);
-    x2 =  shldd(x2, x1, delta_exp);
-    x1 =  shldd(x1, x0, delta_exp);
-    x0 =  x0 << delta_exp;
-
-    // add mantissa
-    add128(&x3,&x2,&x1,&x0, x3,x2,x1,x0, y3,y2,y1,y0);
-
-    // Normalize
-    if (__builtin_expect(x3 == 0, 0)) { // MS word is fully canceled
+  if (__builtin_expect(x3 == 0, 0)) { // MS word is fully canceled
+    // Left shift. Result is exact (no need for rounding). Subnormal result possible
+    unsigned lzw = 0;
+    do {
+      x3 = x2;
+      x2 = x1;
+      x1 = x0;
+      x0 = 0;
+      lzw += 32;
+    } while (x3 == 0);
+    unsigned lzb = __builtin_clz(x3);
+    // shift MS bit into x3[31]
+    x3 = shldd(x3, x2, lzb);
+    x2 = shldd(x2, x1, lzb);
+    x1 = x1 << lzb;
+    // shift MS bit into x3[16]
+    res0 = x1 << 17;
+    res1 = unsafe_shrdd(x2, x1, 15);
+    res2 = unsafe_shrdd(x3, x2, 15);
+    res3 = x3 >> 15;
+    unsigned lshift = lzw + lzb - 15;
+    exp_res = exp_y - lshift - 1;
+    if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
+      // de-normalize
+      unsigned rshift = lshift + 1 - exp_y;
+      while (rshift >= 32) {
+        res0 = res1;
+        res1 = res2;
+        res2 = res3;
+        res3 = 0;
+        rshift -= 32;
+      }
+      res0 = shrdd(res1, res0, rshift);
+      res1 = shrdd(res2, res1, rshift);
+      res2 = shrdd(res3, res2, rshift);
+      res3 = res3 >> rshift;
+      exp_res = 0;
+    }
+  } else {
+    unsigned lz = __builtin_clz(x3);
+    if (lz <= 15) {
+      // No shift or right shift. Rounding required. Subnormal result impossible
+      // This case expected to be the most common in real world
+      unsigned rshift = 15 - lz; // rshift in range [0:15]
+      uint32_t rnd_incr = ((uint32_t)(1) << rshift) >> 1;
+      incr128by32(&x3,&x2,&x1,&x0, rnd_incr);
+      // Rounding done, except for ties
+      res0 = shrdd(x1, x0, rshift);
+      res1 = shrdd(x2, x1, rshift);
+      res2 = shrdd(x3, x2, rshift);
+      res3 = x3 >> rshift;
+      uint32_t rnd_msk = rnd_incr * 2 - 1;
+      if (__builtin_expect_with_probability((x0 & rnd_msk)==0, 0, 1.0)) { // a tie
+        res0 &= ~(uint32_t)1; // break tie to even
+      }
+      exp_res = exp_y + rshift - 1;
+    } else { // 16 <= lz <= 31
       // Left shift. Result is exact (no need for rounding). Subnormal result possible
-      unsigned lzw = 0;
-      do {
-        x3 = x2;
-        x2 = x1;
-        x1 = x0;
-        x0 = 0;
-        lzw += 32;
-      } while (x3 == 0);
-      unsigned lzb = __builtin_clz(x3);
-      // shift MS bit into x3[31]
-      x3 = shldd(x3, x2, lzb);
-      x2 = shldd(x2, x1, lzb);
-      x1 = x1 << lzb;
-      // shift MS bit into x3[16]
-      res0 = x1 << 17;
-      res1 = unsafe_shrdd(x2, x1, 15);
-      res2 = unsafe_shrdd(x3, x2, 15);
-      res3 = x3 >> 15;
-      unsigned lshift = lzw + lzb - 15;
+      unsigned lshift = lz - 15; // lz = 1 to 16
       exp_res = exp_y - lshift - 1;
       if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
-        // de-normalize
-        unsigned rshift = lshift + 1 - exp_y;
-        while (rshift >= 32) {
-          res0 = res1;
-          res1 = res2;
-          res2 = res3;
-          res3 = 0;
-          rshift -= 32;
-        }
-        res0 = shrdd(res1, res0, rshift);
-        res1 = shrdd(res2, res1, rshift);
-        res2 = shrdd(res3, res2, rshift);
-        res3 = res3 >> rshift;
+        lshift = exp_y - 1;
         exp_res = 0;
-      }
-    } else {
-      unsigned lz = __builtin_clz(x3);
-      if (lz <= 15) {
-        // No shift or right shift. Rounding required. Subnormal result impossible
-        // This case expected to be the most common in real world
-        unsigned rshift = 15 - lz; // rshift in range [0:15]
-        uint32_t rnd_incr = ((uint32_t)(1) << rshift) >> 1;
-        incr128by32(&x3,&x2,&x1,&x0, rnd_incr);
-        // Rounding done, except for ties
-        res0 = shrdd(x1, x0, rshift);
-        res1 = shrdd(x2, x1, rshift);
-        res2 = shrdd(x3, x2, rshift);
-        res3 = x3 >> rshift;
-        uint32_t rnd_msk = rnd_incr * 2 - 1;
-        if (__builtin_expect_with_probability((x0 & rnd_msk)==0, 0, 1.0)) { // a tie
-          res0 &= ~(uint32_t)1; // break tie to even
-        }
-        exp_res = exp_y + rshift - 1;
-      } else { // 16 <= lz <= 31
-        // Left shift. Result is exact (no need for rounding). Subnormal result possible
-        unsigned lshift = lz - 15; // lz = 1 to 16
-        exp_res = exp_y - lshift - 1;
-        if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
-          lshift = exp_y - 1;
-          exp_res = 0;
-          res3 = shldd(x3, x2, lshift);
-          res2 = shldd(x2, x1, lshift);
-          res1 = shldd(x1, x0, lshift);
-          res0 = x0 << lshift;
-        } else {
-          res3 = unsafe_shldd(x3, x2, lshift);
-          res2 = unsafe_shldd(x2, x1, lshift);
-          res1 = unsafe_shldd(x1, x0, lshift);
-          res0 = x0 << lshift;
-        }
+        res3 = shldd(x3, x2, lshift);
+        res2 = shldd(x2, x1, lshift);
+        res1 = shldd(x1, x0, lshift);
+        res0 = x0 << lshift;
+      } else {
+        res3 = unsafe_shldd(x3, x2, lshift);
+        res2 = unsafe_shldd(x2, x1, lshift);
+        res1 = unsafe_shldd(x1, x0, lshift);
+        res0 = x0 << lshift;
       }
     }
-  } else { // delta_exp > 14
-    if (delta_exp > 114) {
-      return mk4_f128(xHiw, x2, x1, x0);
-    }
-
-    // align mantissa of y with x
-    unsigned rshift = delta_exp % 32;
-    uint32_t yG = (y0 << (rshift ^ 31)) << 1; // fraction of LS bit
-    y0 =  shrdd(y1, y0, rshift);
-    y1 =  shrdd(y2, y1, rshift);
-    y2 =  shrdd(y3, y2, rshift);
-    y3 =  (int32_t)y3 >> rshift;
-    if (__builtin_expect((delta_exp >= 32),0)) {
-      uint32_t signExt = (int32_t)y3 >> 31; // extend sign bit
-      uint32_t sticky = yG;
-      if (delta_exp >= 96) {
-        sticky |= y1 | y0;
-        yG = y2;
-        y0 = y3;
-        y1 = y2 = signExt;
-      } else if (delta_exp >= 64) {
-        sticky |= y0;
-        yG = y1;
-        y0 = y2;
-        y1 = y3;
-        y2 = signExt;
-      } else { // 32 <= delta_exp < 64
-        yG = y0;
-        y0 = y1;
-        y1 = y2;
-        y2 = y3;
-      }
-      y3  = signExt;
-      yG |= (sticky != 0);
-    }
-
-    // add mantissa
-    add128(&x3,&x2,&x1,&x0, x3,x2,x1,x0, y3,y2,y1,y0);
-
-    // Normalize
-    unsigned lz = __builtin_clz(x3); // lz = 14 to 16
-    res3 = unsafe_shldd(x3, x2, lz);
-    res2 = unsafe_shldd(x2, x1, lz);
-    res1 = unsafe_shldd(x1, x0, lz);
-    res0 = unsafe_shldd(x0, yG, lz);
-    uint32_t resG  = yG << lz;
-    exp_res = exp_x + 15 - lz;
-
-    res3 &= ~BIT_31; // clear hidden bit
-    // round to nearest
-    incr128by32(&res3,&res2,&res1,&res0, BIT_14);
-    unsigned rnd_rem = res0 & MSK_15;
-    if (__builtin_expect(rnd_rem == 0, 0)) { // a possible tie
-      if (resG == 0)     // a tie, indeed
-        res0 &= -BIT_16; // break tie to even
-    }
-    res0 = unsafe_shrdd(res1, res0, 15);
-    res1 = unsafe_shrdd(res2, res1, 15);
-    res2 = unsafe_shrdd(res3, res2, 15);
-    res3 = res3 >> 15;
   }
+
   // combine sign+exponent+mantissa
   res3 += (uint32_t)exp_res << 16;
   if (__builtin_expect(res3 >= INF_MSW, 0)) { // overflow
