@@ -202,6 +202,26 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
     }
   }
 
+  unsigned delta_exp = exp_x - exp_y;
+  if (delta_exp > 14) {
+    // align mantissa of y with x * 2**-14
+    unsigned rshift_x = delta_exp - 14;
+    unsigned rshift = rshift_x % 64;
+    uint64_t yG = (yLo << (rshift ^ 63)) << 1; // fraction of LS bit
+    yLo = (yLo >> rshift) | ((yHi << (rshift ^ 63)) << 1);
+    yHi = (yHi >> rshift);
+    if (__builtin_expect((rshift_x >= 64),0)) {
+      if (rshift_x > 100)
+        yHi = 1;
+      yG  |= yLo;
+      yLo  = yHi;
+      yHi  = 0;
+    }
+    yLo |= (yG != 0); // sticky bit
+    delta_exp = 14;
+    exp_y     = exp_x - 14;
+  }
+
   // if (sub) y = - y; Implemented in almost branchless code
   sub = (int64_t)sub >> 63; // convert to all '1' or all '0'. This code is not portable by c rules, but guaranteed to work in gcc
   yLo ^= sub;
@@ -210,132 +230,83 @@ addq_core(unsigned __int128 u_x, uint64_t yLo, uint64_t yHi)
   if (__builtin_expect_with_probability(yLo == 0,0, 1.0))
     yHi -= sub;
 
-  unsigned delta_exp = exp_x - exp_y;
   uint64_t resHi, resLo;
   unsigned exp_res;
-  if (delta_exp <= 14) {
-    // align mantissa of x with y
-    xHi =  shldq(xHi, xLo, delta_exp);
-    xLo =  xLo << delta_exp;
-    // add mantissa
-    xLo += yLo;
-    xHi += yHi + (xLo < yLo);
 
-    // Normalize
-    if (__builtin_expect(xHi == 0, 0)) { // MS word is fully canceled
-      if (xLo == 0) { // full cancellation
-        // Result of full cancellation is zero, but the sign of zero
-        // depends on rounding mode
-        // Doing the same operation in binary64 (a.k.a double) will produce a correct sign
-        resHi = d2u(u2d(DBL_ONE_MSW)+u2d(DBL_ONE_MSW^(sub&BIT_63)));
-        ADDQ_CORE_RETURN(ret, resHi, xLo);
-      }
-      unsigned lz = __builtin_clzll(xLo);
-      unsigned lshift = lz + 49;
-      if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
-        lshift = exp_y - 1;
-        if (lshift >= 64) {
-          resHi = xLo << (lshift % 64);
-          resLo = 0;
-        } else {
-          resHi = shldq(xHi, xLo, lshift);
-          resLo = xLo << lshift;
-        }
-        exp_res = 0;
+  // align mantissa of x with y
+  xHi =  shldq(xHi, xLo, delta_exp);
+  xLo =  xLo << delta_exp;
+  // add mantissa
+  xLo += yLo;
+  xHi += yHi + (xLo < yLo);
+
+  // Normalize
+  if (__builtin_expect(xHi == 0, 0)) { // MS word is fully canceled
+    if (xLo == 0) { // full cancellation
+      // Result of full cancellation is zero, but the sign of zero
+      // depends on rounding mode
+      // Doing the same operation in binary64 (a.k.a double) will produce a correct sign
+      resHi = d2u(u2d(DBL_ONE_MSW)+u2d(DBL_ONE_MSW^(sub&BIT_63)));
+      ADDQ_CORE_RETURN(ret, resHi, xLo);
+    }
+    unsigned lz = __builtin_clzll(xLo);
+    unsigned lshift = lz + 49;
+    if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
+      lshift = exp_y - 1;
+      if (lshift >= 64) {
+        resHi = xLo << (lshift % 64);
+        resLo = 0;
       } else {
-        xLo <<= lz;
-        resHi = xLo >> 15;
-        resLo = xLo << 49;
-        exp_res = exp_y - lshift - 1;
+        resHi = shldq(xHi, xLo, lshift);
+        resLo = xLo << lshift;
       }
+      exp_res = 0;
     } else {
-      unsigned lz = __builtin_clzll(xHi);
-      if (lz <= 15) {
-        // No shift or right shift. Rounding required. Subnormal result impossible
-        // This case expected to be the most common in real world
-        uint64_t rnd_bits = (xLo << lz) & MSK_16; // isolate bits related to rounding. LS bit of result in bit 15
-        unsigned rshift = 15 - lz; // rshift in range [0:15]
-        resLo = (xLo >> rshift) | ((xHi << (rshift^63)) << 1);
-        resHi = xHi >> rshift;
-
-        // Rounding
-        // Round by mocking binary128 rounding with binary64 (a.k.a. double) rounding
-        // Doing it this way we avoid costly reading of current rounding mode
-        // It also has a desirable side effect of correctly setting Inexact flag
-        const uint64_t DBL_BIAS = 2;
-        uint64_t rnd_u1 = rnd_bits | (DBL_BIAS << 52) | sign_x;
-        uint64_t rnd_u2 = ((DBL_BIAS+15) << 52) | sign_x;
-        uint64_t rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
-        // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
-        uint64_t rnd_incr = (resLo ^ rnd_sum_u) & 1;
-        if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
-          resHi += 1;
-        // Finish rounding
-        exp_res = exp_y + rshift - 1;
-      } else {
-        // Left shift. No need for rounding. Subnormal result possible
-        unsigned lshift = lz - 15; // lz = 1 to 48
-        exp_res = exp_y - lshift - 1;
-        if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
-          lshift = exp_y - 1;
-          exp_res = 0;
-          resHi = shldq(xHi, xLo, lshift);
-          resLo = xLo << lshift;
-        } else {
-          resHi = unsafe_shldq(xHi, xLo, lshift);
-          resLo = xLo << lshift;
-        }
-      }
+      xLo <<= lz;
+      resHi = xLo >> 15;
+      resLo = xLo << 49;
+      exp_res = exp_y - lshift - 1;
     }
   } else {
-    // align mantissa of y with x
-    if (delta_exp >= 115) // abs(y) < 0.5 ULP(x)
-      delta_exp = 115;    // we can clip delta_exp because all tiny values of y produce the same result
-    unsigned rshift = delta_exp % 64;
-    uint64_t yG = (yLo << (rshift ^ 63)) << 1; // fraction of LS bit
-    yLo = (yLo >> rshift) | ((yHi << (rshift ^ 63)) << 1);
-    yHi = (int64_t)yHi >> rshift;
-    if (__builtin_expect((delta_exp >= 64),0)) {
-      // 64 <= delta_exp <= 115
-      // Let's do a trick:
-      //	Since delta_exp in [64:115] delta_exp % 64 is in [0:51]. It means that 13 LS bits of yG==0
-      // On the other hand, since delta_exp > 1 we are guaranteed to have no more than 1 MS bit of mnt_hi(x) canceled during summation
-      // which means that we need at most 2 exact MS bits in yG and the rest are sticky bits.
-      // Then we can calculate yG = (yG >> 8) | yLo
-      yG  = (yG >> 8) | yLo;
-      yLo = yHi;
-      yHi = (int64_t)yHi >> 63; // expend sign bit
+    unsigned lz = __builtin_clzll(xHi);
+    if (lz <= 15) {
+      // No shift or right shift. Rounding required. Subnormal result impossible
+      // This case expected to be the most common in real world
+      uint64_t rnd_bits = (xLo << lz) & MSK_16; // isolate bits related to rounding. LS bit of result in bit 15
+      unsigned rshift = 15 - lz; // rshift in range [0:15]
+      resLo = (xLo >> rshift) | ((xHi << (rshift^63)) << 1);
+      resHi = xHi >> rshift;
+
+      // Rounding
+      // Round by mocking binary128 rounding with binary64 (a.k.a. double) rounding
+      // Doing it this way we avoid costly reading of current rounding mode
+      // It also has a desirable side effect of correctly setting Inexact flag
+      const uint64_t DBL_BIAS = 2;
+      uint64_t rnd_u1 = rnd_bits | (DBL_BIAS << 52) | sign_x;
+      uint64_t rnd_u2 = ((DBL_BIAS+15) << 52) | sign_x;
+      uint64_t rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
+      // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
+      uint64_t rnd_incr = (resLo ^ rnd_sum_u) & 1;
+      if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
+        resHi += 1;
+      // Finish rounding
+      exp_res = exp_y + rshift - 1;
+    } else {
+      // Left shift. No need for rounding. Subnormal result possible
+      unsigned lshift = lz - 15; // lz = 1 to 48
+      exp_res = exp_y - lshift - 1;
+      if (__builtin_expect((exp_y <= lshift), 0)) { // subnormal result
+        lshift = exp_y - 1;
+        exp_res = 0;
+        resHi = shldq(xHi, xLo, lshift);
+        resLo = xLo << lshift;
+      } else {
+        resHi = unsafe_shldq(xHi, xLo, lshift);
+        resLo = xLo << lshift;
+      }
     }
-    // add mantissa
-    xLo += yLo;
-    xHi += yHi + (xLo < yLo);
-
-    // Normalize
-    unsigned lz = __builtin_clzll(xHi); // lz = 14 to 16
-    resHi = unsafe_shldq(xHi, xLo, lz);
-    resLo = unsafe_shldq(xLo, yG,  lz);
-    resLo |= ((yG << lz) != 0);
-    exp_res = exp_x + 15 - lz;
-
-    resHi &= ~BIT_63; // clear hidden bit
-    uint64_t rnd_bits = resLo & MSK_16; // isolate bits related to rounding. LS bit of result in bit 15
-    resLo = shrdq(resHi, resLo, 15);
-    resHi = resHi >> 15;
-
-    // Rounding
-    // Round by mocking binary128 rounding with binary64 (a.k.a. double) rounding
-    // Doing it this way we avoid costly reading of current rounding mode
-    // It also has a desirable side effect of correctly setting Inexact flag
-    const uint64_t DBL_BIAS = 2;
-    uint64_t rnd_u1 = rnd_bits | (DBL_BIAS << 52) | sign_x;
-    uint64_t rnd_u2 = ((DBL_BIAS+15) << 52) | sign_x;
-    uint64_t rnd_sum_u = d2u(u2d(rnd_u1) + u2d(rnd_u2));
-    // After binary64 rounding, LS bit of result resides in bit 0 of the rnd_sum_u
-    uint64_t rnd_incr = (resLo ^ rnd_sum_u) & 1;
-    if (__builtin_add_overflow(resLo, rnd_incr, &resLo))
-      resHi += 1;
-    // Finish rounding
   }
+
   // combine sign+exponent+mantissa
   resHi += (uint64_t)exp_res << 48;
   if (__builtin_expect(resHi >= INF_MSW, 0)) { // overflow
